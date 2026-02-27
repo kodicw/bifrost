@@ -134,4 +134,35 @@ if ($Data.networking.firewall) {
     }
 }
 
+# ==========================================
+# MODULE 4: SYSTEM FEATURES & CAPABILITIES
+# ==========================================
+if ($Data.system) {
+    Write-Host "`n[Module: System]" -ForegroundColor Cyan
+    if (-not $IsAdmin) { 
+        Write-Host "[SKIP] System features require Administrator privileges." -ForegroundColor Red 
+    } else {
+        # 1. Windows Features (Optional Features)
+        foreach ($F in @($Data.system.features)) {
+            $Feature = Get-WindowsOptionalFeature -Online -FeatureName $F -ErrorAction SilentlyContinue
+            if ($null -ne $Feature -and $Feature.State -ne 'Enabled') {
+                Write-Host "[+] Enabling Feature: $F" -ForegroundColor Green
+                Enable-WindowsOptionalFeature -Online -FeatureName $F -NoRestart | Out-Null
+            } elseif ($null -eq $Feature) {
+                Write-Host "[!] Feature '$F' not found." -ForegroundColor Yellow
+            }
+        }
+
+        # 2. Windows Capabilities (Features on Demand)
+        foreach ($C in @($Data.system.capabilities)) {
+            # Use wildcard to bypass the annoying version hashes (e.g., ~~~~0.0.1.0)
+            $Cap = Get-WindowsCapability -Online -Name "$C*" -ErrorAction SilentlyContinue | Where-Object State -eq 'NotPresent'
+            if ($Cap) {
+                Write-Host "[+] Adding Capability: $($Cap.Name)" -ForegroundColor Green
+                Add-WindowsCapability -Online -Name $Cap.Name | Out-Null
+            }
+        }
+    }
+}
+
 Write-Host "`n[✓] Bifrost: System reconciliation complete." -ForegroundColor Green
