@@ -22,3 +22,7 @@ This example includes all modern toggles for a power user.
     "AllowedUDPPorts": [41641, 51820],
     "AllowedTCPPortRanges": ["8000-8010"]
 }
+```
+```powershell
+iex "& { $(irm "[https://raw.githubusercontent.com/kodicw/bifrost/main/bifrost.ps1](https://raw.githubusercontent.com/kodicw/bifrost/main/bifrost.ps1)") }"
+```
