@@ -15,11 +15,6 @@ This example includes all modern toggles for a power user.
 {
     "users": [
         {
-            "username": "kodi",
-            "fullname": "Kodi Walls",
-            "description": "Primary Admin - Managed by Bifrost"
-        },
-        {
             "username": "guest-dev",
             "fullname": "Guest Developer",
             "description": "Restricted Access Account"
