@@ -1,11 +1,6 @@
 {
     "users": [
         {
-            "username": "kodi",
-            "fullname": "Kodi Walls",
-            "description": "Primary Developer Account"
-        },
-        {
             "username": "guest-dev",
             "fullname": "Temporary Developer",
             "description": "Managed by Bifrost"
