@@ -9,7 +9,7 @@ Before running this, understand these platform limitations:
 * **Scoop Installation**: Scoop explicitly blocks installation from an elevated prompt. You **must** run Bifrost as a standard user first to install Scoop, then run it as an Administrator to process Global Apps, System Features, and Networking.
 * **User Passwords**: Bifrost creates users with the `-NoPassword` flag to prevent storing credentials in plain text. An Administrator must manually set the password (`net user <username> *`) before the account can log in.
 * **Reboots**: Windows Features (like WSL or IIS) often require a reboot. Bifrost passes `-NoRestart` to prevent mid-script crashes. You are responsible for rebooting later.
-
+* **Bifrost currently lacks a native lock file implementation.**
 ## 🚀 Quick Start (One-Liner)
 
 Run this from a PowerShell prompt to bootstrap your system directly from GitHub:
