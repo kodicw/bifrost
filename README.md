@@ -15,7 +15,7 @@ Before running this, understand these platform limitations:
 Run this from a PowerShell prompt to bootstrap your system directly from GitHub:
 
 ```powershell
-iex "& { $(irm '[https://raw.githubusercontent.com/kodicw/bifrost/main/bifrost.ps1](https://raw.githubusercontent.com/kodicw/bifrost/main/bifrost.ps1)') }"
+iex "& { $(irm 'https://raw.githubusercontent.com/kodicw/bifrost/main/bifrost.ps1') }"
 
 ```
 
