@@ -119,9 +119,7 @@ iex "& { $(irm '[https://raw.githubusercontent.com/kodicw/bifrost/main/bifrost.p
 
 ```
 
-## 📊 Raw Data: How the Firewall Works
+## 📊 How the Firewall Works
 
 Bifrost tags every firewall rule it creates with the `-Group "BifrostManaged"` property. This allows the script to safely identify, audit, and purge its own rules without breaking critical Windows system rules or dynamic rules created by games and software.
 your JSON syntax on every push?
-
-```
