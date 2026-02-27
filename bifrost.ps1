@@ -2,48 +2,50 @@
 param (
     [Parameter(Mandatory=$false)]
     [string]$Config = "C:\Bifrost\firewall.json",
-
     [Parameter(Mandatory=$false)]
-    [bool]$Pure = $false # Now defaults to Impure (Additive)
+    [bool]$Pure = $false
 )
 
-# --- RAW DATA: Load Config ---
-if (-not (Test-Path $Config)) {
-    Write-Host "[!] Error: Configuration not found at $Config" -ForegroundColor Red
-    exit 1
-}
-
+if (-not (Test-Path $Config)) { Write-Error "Config not found."; exit 1 }
 $Data = Get-Content -Raw $Config | ConvertFrom-Json
 $Tag = "BifrostManaged"
 
-# --- LOGIC: The Sync ---
-
+# --- DECLARATIVE PURGE ---
 if ($Pure) {
-    Write-Host "[i] Running in PURE mode. Purging existing Bifrost rules..." -ForegroundColor Yellow
     Remove-NetFirewallRule -Group $Tag -ErrorAction SilentlyContinue
-} else {
-    Write-Host "[i] Running in IMPURE mode (Default). Adding/Updating rules only..." -ForegroundColor Gray
 }
 
-# Set Profile State
+# --- PROFILE STATE ---
 Set-NetFirewallProfile -All -Enabled ([bool]$Data.Enabled)
+if (-not $Data.Enabled) { return }
 
-if ($Data.Enabled) {
-    # Apply TCP
-    foreach ($Port in $Data.AllowedTCPPorts) {
-        $RuleName = "Bifrost-TCP-$Port"
-        if (-not (Get-NetFirewallRule -Name $RuleName -ErrorAction SilentlyContinue)) {
-            New-NetFirewallRule -Name $RuleName -DisplayName $RuleName -Group $Tag -Protocol TCP -LocalPort $Port -Action Allow
-        }
-    }
-
-    # Apply UDP
-    foreach ($Port in $Data.AllowedUDPPorts) {
-        $RuleName = "Bifrost-UDP-$Port"
-        if (-not (Get-NetFirewallRule -Name $RuleName -ErrorAction SilentlyContinue)) {
-            New-NetFirewallRule -Name $RuleName -DisplayName $RuleName -Group $Tag -Protocol UDP -LocalPort $Port -Action Allow
-        }
+# --- HELPERS ---
+function Add-BifrostRule {
+    param($Name, $Proto, $Port, $Remote = "Any")
+    $FullID = "Bifrost-$Name"
+    if (-not (Get-NetFirewallRule -Name $FullID -ErrorAction SilentlyContinue)) {
+        New-NetFirewallRule -Name $FullID -DisplayName $FullID -Group $Tag -Protocol $Proto -LocalPort $Port -RemoteAddress $Remote -Action Allow
     }
 }
 
-Write-Host "Success: Sync Complete." -ForegroundColor Green
+# --- LOGIC: ICMP (Ping) ---
+if ($Data.AllowPing) {
+    Add-BifrostRule -Name "ICMPv4" -Proto ICMPv4 -Port Any
+}
+
+# --- LOGIC: RDP ---
+if ($Data.EnableRDP) {
+    Add-BifrostRule -Name "RDP-TCP" -Proto TCP -Port 3389
+}
+
+# --- LOGIC: Ports ---
+$RemoteFilter = if ($Data.TailscaleOnly) { "100.64.0.0/10" } else { "Any" }
+
+foreach ($Port in $Data.AllowedTCPPorts) {
+    Add-BifrostRule -Name "TCP-$Port" -Proto TCP -Port $Port -Remote $RemoteFilter
+}
+foreach ($Port in $Data.AllowedUDPPorts) {
+    Add-BifrostRule -Name "UDP-$Port" -Proto UDP -Port $Port -Remote $RemoteFilter
+}
+
+Write-Host "Bifrost: System state synchronized." -ForegroundColor Green
