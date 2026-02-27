@@ -31,7 +31,7 @@ function Invoke-Bifrost {
         if (-not (Test-Path $Config)) {
             Write-Host "[*] No config found. Generating sane default template..." -ForegroundColor Gray
             @{ 
-                users = @(@{ username = "admin-user"; fullname = "Local Administrator"; description = "Bifrost Managed Admin" });
+                users = @(@{ username = "bifrost-user"; fullname = "Local Administrator"; description = "Bifrost Managed Admin" });
                 packages = @{ 
                     apps = @("git", "edit"); 
                 };
