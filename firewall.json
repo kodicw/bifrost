@@ -1,6 +1,0 @@
-{
-    "Enabled": true,
-    "AllowedTCPPorts": [80, 443, 3389],
-    "AllowedUDPPorts": [53, 41641, 51820],
-    "AllowedTCPPortRanges": ["8000-8010"]
-}

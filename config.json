@@ -1,0 +1,32 @@
+{
+    "packages": {
+        "buckets": [
+            "extras",
+            "non-portable",
+            "versions"
+        ],
+        "apps": [
+            "git",
+            "neovim",
+            "curl",
+            "fastfetch",
+            "starship",
+            "fzf"
+        ],
+        "global_apps": [
+            "7zip",
+            "dark",
+            "tailscale"
+        ]
+    },
+    "networking": {
+        "firewall": {
+            "enabled": true,
+            "allowPing": true,
+            "enableRDP": false,
+            "tailscaleOnly": false,
+            "allowedTCPPorts": [80, 443, 3000],
+            "allowedUDPPorts": [41641, 51820]
+        }
+    }
+}
