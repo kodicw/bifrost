@@ -58,5 +58,4 @@ This example includes all modern toggles for a power user.
 }
 ```
 ```powershell
-iex "& { $(irm "[https://raw.githubusercontent.com/kodicw/bifrost/main/bifrost.ps1](https://raw.githubusercontent.com/kodicw/bifrost/main/bifrost.ps1)") }"
-```
+iex "& { $(irm 'https://raw.githubusercontent.com/kodicw/bifrost/main/bifrost.ps1') }"```
