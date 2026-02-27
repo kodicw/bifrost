@@ -15,12 +15,11 @@ Before running this, understand these platform limitations:
 Run this from a PowerShell prompt to bootstrap your system directly from GitHub:
 
 ```powershell
-iex "& { $(irm 'https://raw.githubusercontent.com/kodicw/bifrost/main/bifrost.ps1') }"
-
+irm 'https://raw.githubusercontent.com/kodicw/bifrost/main/bifrost.ps1' | iex; Invoke-Bifrost
 ```
 
 ```powershell
-iex "& { $(irm 'https://raw.githubusercontent.com/kodicw/bifrost/main/bifrost.ps1') } -Pure `$true"
+irm 'https://raw.githubusercontent.com/kodicw/bifrost/main/bifrost.ps1' | iex; Invoke-Bifrost -Pure
 ```
 
 *Note: If `C:\Bifrost\config.json` does not exist, the script will automatically generate a sane default template for you on the first run.*
