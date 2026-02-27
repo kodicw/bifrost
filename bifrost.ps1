@@ -1,3 +1,6 @@
+
+
+
 [CmdletBinding()]
 param (
     [Parameter(Mandatory=$false)]
@@ -146,8 +149,8 @@ if ($Data.networking.firewall) {
             Remove-NetFirewallRule -Group $Tag -ErrorAction SilentlyContinue
         }
 
-        Set-NetFirewallProfile -All -Enabled ([bool]$FW.enabled)
-
+            $ProfileState = if ($FW.enabled) { "True" } else { "False" }
+            Set-NetFirewallProfile -All -Enabled $ProfileState
         if ($FW.enabled) {
             function Add-BifrostRule {
                 param($Name, $Proto, $Port, $Remote = "Any")
