@@ -1,53 +1,49 @@
 [CmdletBinding()]
 param (
     [Parameter(Mandatory=$false)]
-    [string]$Config = "C:\Bifrost\firewall.json"
+    [string]$Config = "C:\Bifrost\firewall.json",
+
+    [Parameter(Mandatory=$false)]
+    [bool]$Pure = $false # Now defaults to Impure (Additive)
 )
 
 # --- RAW DATA: Load Config ---
 if (-not (Test-Path $Config)) {
     Write-Host "[!] Error: Configuration not found at $Config" -ForegroundColor Red
-    Write-Host "[i] Create the directory: New-Item -Path 'C:\Bifrost' -ItemType Directory"
     exit 1
 }
 
-try {
-    $Data = Get-Content -Raw $Config | ConvertFrom-Json
-} catch {
-    Write-Host "[!] Error: Failed to parse JSON in $Config. Check your syntax!" -ForegroundColor Red
-    exit 1
-}
+$Data = Get-Content -Raw $Config | ConvertFrom-Json
+$Tag = "BifrostManaged"
 
-# --- LOGIC: The "Nix-ish" Declarative Sync ---
-function Apply-BifrostState {
-    param($State)
+# --- LOGIC: The Sync ---
 
-    $Tag = "BifrostManaged"
-
-    # 1. Reset: Purge existing 'Bifrost' rules to prevent state drift
+if ($Pure) {
+    Write-Host "[i] Running in PURE mode. Purging existing Bifrost rules..." -ForegroundColor Yellow
     Remove-NetFirewallRule -Group $Tag -ErrorAction SilentlyContinue
+} else {
+    Write-Host "[i] Running in IMPURE mode (Default). Adding/Updating rules only..." -ForegroundColor Gray
+}
 
-    # 2. Set Profile State
-    $EnabledState = if ($State.Enabled) { "True" } else { "False" }
-    Set-NetFirewallProfile -All -Enabled $EnabledState
+# Set Profile State
+Set-NetFirewallProfile -All -Enabled ([bool]$Data.Enabled)
 
-    if ($State.Enabled) {
-        # 3. Batch Apply TCP
-        if ($State.AllowedTCPPorts) {
-            $State.AllowedTCPPorts | ForEach-Object {
-                New-NetFirewallRule -DisplayName "Bifrost-TCP-$_" -Group $Tag -Protocol TCP -LocalPort $_ -Action Allow
-            }
-        }
-
-        # 4. Batch Apply UDP
-        if ($State.AllowedUDPPorts) {
-            $State.AllowedUDPPorts | ForEach-Object {
-                New-NetFirewallRule -DisplayName "Bifrost-UDP-$_" -Group $Tag -Protocol UDP -LocalPort $_ -Action Allow
-            }
+if ($Data.Enabled) {
+    # Apply TCP
+    foreach ($Port in $Data.AllowedTCPPorts) {
+        $RuleName = "Bifrost-TCP-$Port"
+        if (-not (Get-NetFirewallRule -Name $RuleName -ErrorAction SilentlyContinue)) {
+            New-NetFirewallRule -Name $RuleName -DisplayName $RuleName -Group $Tag -Protocol TCP -LocalPort $Port -Action Allow
         }
     }
 
-    Write-Host "Success: $Config applied to Windows Firewall." -ForegroundColor Cyan
+    # Apply UDP
+    foreach ($Port in $Data.AllowedUDPPorts) {
+        $RuleName = "Bifrost-UDP-$Port"
+        if (-not (Get-NetFirewallRule -Name $RuleName -ErrorAction SilentlyContinue)) {
+            New-NetFirewallRule -Name $RuleName -DisplayName $RuleName -Group $Tag -Protocol UDP -LocalPort $Port -Action Allow
+        }
+    }
 }
 
-Apply-BifrostState -State $Data
+Write-Host "Success: Sync Complete." -ForegroundColor Green
