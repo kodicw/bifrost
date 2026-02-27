@@ -1,32 +1,26 @@
 {
+    "users": [
+        {
+            "username": "kodi",
+            "fullname": "Kodi Walls",
+            "description": "Primary Developer Account"
+        },
+        {
+            "username": "guest-dev",
+            "fullname": "Temporary Developer",
+            "description": "Managed by Bifrost"
+        }
+    ],
     "packages": {
-        "buckets": [
-            "extras",
-            "non-portable",
-            "versions"
-        ],
-        "apps": [
-            "git",
-            "neovim",
-            "curl",
-            "fastfetch",
-            "starship",
-            "fzf"
-        ],
-        "global_apps": [
-            "7zip",
-            "dark",
-            "tailscale"
-        ]
+        "buckets": ["extras"],
+        "apps": ["git", "neovim"],
+        "global_apps": ["7zip"]
     },
     "networking": {
         "firewall": {
             "enabled": true,
             "allowPing": true,
-            "enableRDP": false,
-            "tailscaleOnly": false,
-            "allowedTCPPorts": [80, 443, 3000],
-            "allowedUDPPorts": [41641, 51820]
+            "allowedTCPPorts": [80, 443]
         }
     }
 }
