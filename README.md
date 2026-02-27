@@ -13,14 +13,53 @@ This example includes all modern toggles for a power user.
 
 ```json
 {
-    "Enabled": true,
-    "Pure": false,
-    "AllowPing": true,
-    "EnableRDP": false,
-    "TailscaleOnly": false,
-    "AllowedTCPPorts": [80, 443],
-    "AllowedUDPPorts": [41641, 51820],
-    "AllowedTCPPortRanges": ["8000-8010"]
+    "users": [
+        {
+            "username": "kodi",
+            "fullname": "Kodi Walls",
+            "description": "Primary Admin - Managed by Bifrost"
+        },
+        {
+            "username": "guest-dev",
+            "fullname": "Guest Developer",
+            "description": "Restricted Access Account"
+        }
+    ],
+    "packages": {
+        "buckets": [
+            "extras",
+            "non-portable",
+            "versions",
+            "nerd-fonts"
+        ],
+        "apps": [
+            "git",
+            "neovim",
+            "curl",
+            "fastfetch",
+            "starship",
+            "fzf",
+            "zoxide",
+            "direnv"
+        ],
+        "global_apps": [
+            "7zip",
+            "dark",
+            "tailscale",
+            "powertoys"
+        ]
+    },
+    "networking": {
+        "firewall": {
+            "enabled": true,
+            "allowPing": true,
+            "enableRDP": false,
+            "tailscaleOnly": true,
+            "allowedTCPPorts": [80, 443, 3000, 8080],
+            "allowedUDPPorts": [41641, 51820],
+            "allowedTCPPortRanges": ["9000-9005"]
+        }
+    }
 }
 ```
 ```powershell
