@@ -7,7 +7,7 @@ param (
     [bool]$Pure = $false
 )
 
-# Force TLS 1.2 for web requests (Crucial for fresh Windows installs)
+# Force TLS 1.2 for web requests
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
 # ==========================================
@@ -27,15 +27,28 @@ $IsAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIde
 if (-not (Test-Path "C:\Bifrost")) { New-Item -Path "C:\Bifrost" -ItemType Directory -Force | Out-Null }
 
 if (-not (Test-Path $Config)) {
-    Write-Host "[*] No config found. Generating default template..." -ForegroundColor Gray
+    Write-Host "[*] No config found. Generating sane default template..." -ForegroundColor Gray
     @{ 
-        users = @(@{ username = "dev-user"; fullname = "Developer"; description = "Bifrost Managed" });
-        packages = @{ buckets = @("extras"); apps = @("git"); global_apps = @("7zip") };
-        networking = @{ firewall = @{ enabled = $true; allowPing = $true; allowedTCPPorts = @(80, 443); allowedTCPPortRanges = @("9000-9005") } } 
+        users = @(@{ username = "admin-user"; fullname = "Local Administrator"; description = "Bifrost Managed Admin" });
+        packages = @{ 
+            buckets = @("extras", "non-portable"); 
+            apps = @("git", "curl", "vscode"); 
+            global_apps = @("7zip", "powertoys") 
+        };
+        system = @{
+            features = @("Microsoft-Windows-Subsystem-Linux");
+            capabilities = @("OpenSSH.Client")
+        };
+        networking = @{ 
+            firewall = @{ 
+                enabled = $true; allowPing = $true; enableRDP = $false; tailscaleOnly = $false; 
+                allowedTCPPorts = @(80, 443); allowedUDPPorts = @(); 
+                allowedTCPPortRanges = @(); allowedUDPPortRanges = @()
+            } 
+        } 
     } | ConvertTo-Json -Depth 10 | Out-File $Config
 }
 
-# Safely parse JSON
 try {
     $Data = Get-Content -Raw $Config | ConvertFrom-Json
 } catch {
@@ -71,8 +84,8 @@ if ($Data.packages) {
     if ($Policy -eq "Restricted") { Write-Host "[SKIP] Restricted ExecutionPolicy." -ForegroundColor Red } 
     else {
         if (-not (Get-Command scoop -ErrorAction SilentlyContinue)) {
-            Write-Host "[*] Installing Scoop..." -ForegroundColor Yellow
-            irm get.scoop.sh | iex
+            Write-Host "[*] Installing Scoop (Bypassing Admin Check)..." -ForegroundColor Yellow
+            iex "& {$(irm get.scoop.sh)} -RunAsAdmin"
         }
 
         foreach ($B in @($Data.packages.buckets)) {
@@ -94,7 +107,32 @@ if ($Data.packages) {
 }
 
 # ==========================================
-# MODULE 3: NETWORKING (FIREWALL)
+# MODULE 3: SYSTEM FEATURES
+# ==========================================
+if ($Data.system) {
+    Write-Host "`n[Module: System]" -ForegroundColor Cyan
+    if (-not $IsAdmin) { Write-Host "[SKIP] System features require Administrator privileges." -ForegroundColor Red } 
+    else {
+        foreach ($F in @($Data.system.features)) {
+            $Feature = Get-WindowsOptionalFeature -Online -FeatureName $F -ErrorAction SilentlyContinue
+            if ($null -ne $Feature -and $Feature.State -ne 'Enabled') {
+                Write-Host "[+] Enabling Feature: $F" -ForegroundColor Green
+                Enable-WindowsOptionalFeature -Online -FeatureName $F -NoRestart | Out-Null
+            }
+        }
+
+        foreach ($C in @($Data.system.capabilities)) {
+            $Cap = Get-WindowsCapability -Online -Name "$C*" -ErrorAction SilentlyContinue | Where-Object State -eq 'NotPresent'
+            if ($Cap) {
+                Write-Host "[+] Adding Capability: $($Cap.Name)" -ForegroundColor Green
+                Add-WindowsCapability -Online -Name $Cap.Name | Out-Null
+            }
+        }
+    }
+}
+
+# ==========================================
+# MODULE 4: NETWORKING (FIREWALL)
 # ==========================================
 if ($Data.networking.firewall) {
     Write-Host "`n[Module: Networking]" -ForegroundColor Cyan
@@ -127,40 +165,8 @@ if ($Data.networking.firewall) {
             foreach ($P in @($FW.allowedTCPPorts)) { Add-BifrostRule -Name "TCP-$P" -Proto TCP -Port $P -Remote $Remote }
             foreach ($P in @($FW.allowedUDPPorts)) { Add-BifrostRule -Name "UDP-$P" -Proto UDP -Port $P -Remote $Remote }
             
-            # Re-added Port Ranges
             foreach ($R in @($FW.allowedTCPPortRanges)) { Add-BifrostRule -Name "TCP-Range-$R" -Proto TCP -Port $R -Remote $Remote }
             foreach ($R in @($FW.allowedUDPPortRanges)) { Add-BifrostRule -Name "UDP-Range-$R" -Proto UDP -Port $R -Remote $Remote }
-        }
-    }
-}
-
-# ==========================================
-# MODULE 4: SYSTEM FEATURES & CAPABILITIES
-# ==========================================
-if ($Data.system) {
-    Write-Host "`n[Module: System]" -ForegroundColor Cyan
-    if (-not $IsAdmin) { 
-        Write-Host "[SKIP] System features require Administrator privileges." -ForegroundColor Red 
-    } else {
-        # 1. Windows Features (Optional Features)
-        foreach ($F in @($Data.system.features)) {
-            $Feature = Get-WindowsOptionalFeature -Online -FeatureName $F -ErrorAction SilentlyContinue
-            if ($null -ne $Feature -and $Feature.State -ne 'Enabled') {
-                Write-Host "[+] Enabling Feature: $F" -ForegroundColor Green
-                Enable-WindowsOptionalFeature -Online -FeatureName $F -NoRestart | Out-Null
-            } elseif ($null -eq $Feature) {
-                Write-Host "[!] Feature '$F' not found." -ForegroundColor Yellow
-            }
-        }
-
-        # 2. Windows Capabilities (Features on Demand)
-        foreach ($C in @($Data.system.capabilities)) {
-            # Use wildcard to bypass the annoying version hashes (e.g., ~~~~0.0.1.0)
-            $Cap = Get-WindowsCapability -Online -Name "$C*" -ErrorAction SilentlyContinue | Where-Object State -eq 'NotPresent'
-            if ($Cap) {
-                Write-Host "[+] Adding Capability: $($Cap.Name)" -ForegroundColor Green
-                Add-WindowsCapability -Online -Name $Cap.Name | Out-Null
-            }
         }
     }
 }
