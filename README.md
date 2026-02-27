@@ -4,7 +4,7 @@ Bifrost is a NixOS-inspired, declarative configuration manager for Windows. It p
 
 
 
-## ⚠️ Skill Issues & Warnings
+## ⚠️ Warnings
 Before running this, understand these platform limitations:
 * **Scoop Installation**: Scoop explicitly blocks installation from an elevated prompt. You **must** run Bifrost as a standard user first to install Scoop, then run it as an Administrator to process Global Apps, System Features, and Networking.
 * **User Passwords**: Bifrost creates users with the `-NoPassword` flag to prevent storing credentials in plain text. An Administrator must manually set the password (`net user <username> *`) before the account can log in.
