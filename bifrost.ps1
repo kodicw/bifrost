@@ -1,6 +1,3 @@
-
-
-
 [CmdletBinding()]
 param (
     [Parameter(Mandatory=$false)]
@@ -87,24 +84,31 @@ if ($Data.packages) {
     if ($Policy -eq "Restricted") { Write-Host "[SKIP] Restricted ExecutionPolicy." -ForegroundColor Red } 
     else {
         if (-not (Get-Command scoop -ErrorAction SilentlyContinue)) {
-            Write-Host "[*] Installing Scoop (Bypassing Admin Check)..." -ForegroundColor Yellow
-            iex "& {$(irm get.scoop.sh)} -RunAsAdmin"
-        }
-
-        foreach ($B in @($Data.packages.buckets)) {
-            if (-not (scoop bucket list | Select-String "^$B\s")) { scoop bucket add $B }
-        }
-
-        foreach ($A in @($Data.packages.apps)) {
-            if (-not (scoop list | Select-String "^$A\s")) { scoop install $A }
-        }
-
-        if ($Data.packages.global_apps) {
             if ($IsAdmin) {
-                foreach ($GA in @($Data.packages.global_apps)) {
-                    if (-not (scoop list | Select-String "^$GA\s.*\[global\]")) { scoop install $GA -g }
-                }
-            } else { Write-Host "[WARN] Skipping Global Apps (Requires Admin)." -ForegroundColor Yellow }
+                Write-Host "[!] Cannot install Scoop as Administrator. Please run this script in a non-admin prompt first to install Scoop." -ForegroundColor Red
+            } else {
+                Write-Host "[*] Installing Scoop..." -ForegroundColor Yellow
+                irm get.scoop.sh | iex
+            }
+        }
+
+        # Only proceed if Scoop is actually available now
+        if (Get-Command scoop -ErrorAction SilentlyContinue) {
+            foreach ($B in @($Data.packages.buckets)) {
+                if (-not (scoop bucket list | Select-String "^$B\s")) { scoop bucket add $B }
+            }
+
+            foreach ($A in @($Data.packages.apps)) {
+                if (-not (scoop list | Select-String "^$A\s")) { scoop install $A }
+            }
+
+            if ($Data.packages.global_apps) {
+                if ($IsAdmin) {
+                    foreach ($GA in @($Data.packages.global_apps)) {
+                        if (-not (scoop list | Select-String "^$GA\s.*\[global\]")) { scoop install $GA -g }
+                    }
+                } else { Write-Host "[WARN] Skipping Global Apps (Requires Admin)." -ForegroundColor Yellow }
+            }
         }
     }
 }
@@ -149,14 +153,18 @@ if ($Data.networking.firewall) {
             Remove-NetFirewallRule -Group $Tag -ErrorAction SilentlyContinue
         }
 
-            $ProfileState = if ($FW.enabled) { "True" } else { "False" }
-            Set-NetFirewallProfile -All -Enabled $ProfileState
+        $ProfileState = if ($FW.enabled) { "True" } else { "False" }
+        Set-NetFirewallProfile -All -Enabled $ProfileState
+
         if ($FW.enabled) {
             function Add-BifrostRule {
                 param($Name, $Proto, $Port, $Remote = "Any")
                 $ID = "Bifrost-$Name"
                 if (-not (Get-NetFirewallRule -Name $ID -ErrorAction SilentlyContinue)) {
+                    Write-Host "  -> [+] Creating Rule: $ID ($Proto $Port -> $Remote)" -ForegroundColor Green
                     New-NetFirewallRule -Name $ID -DisplayName $ID -Group $Tag -Protocol $Proto -LocalPort $Port -RemoteAddress $Remote -Action Allow | Out-Null
+                } else {
+                    Write-Host "  -> [~] Rule Exists: $ID" -ForegroundColor DarkGray
                 }
             }
 
