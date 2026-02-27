@@ -94,26 +94,28 @@ if ($Data.packages) {
 
         if (Get-Command scoop -ErrorAction SilentlyContinue) {
             
-            # --- PURE MODE: GARBAGE COLLECTION ---
+           # --- PURE MODE: GARBAGE COLLECTION ---
             if ($Pure) {
                 Write-Host "[!] Pure Mode: Purging unmanaged Scoop packages..." -ForegroundColor Yellow
                 
-                # GC User Apps
-                $InstalledUser = @(Get-ChildItem "$env:USERPROFILE\scoop\apps" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name | Where-Object { $_ -ne 'scoop' })
-                $ConfigUser = @($Data.packages.apps)
+                # 1. Sanitize JSON arrays into strict strings
+                [string[]]$ConfigUser = @($Data.packages.apps) | ForEach-Object { $_.ToString().ToLower().Trim() }
+                [string[]]$ConfigGlobal = @($Data.packages.global_apps) | ForEach-Object { $_.ToString().ToLower().Trim() }
+
+                # 2. GC User Apps
+                $InstalledUser = @(Get-ChildItem "$env:USERPROFILE\scoop\apps" -Directory -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name) | ForEach-Object { $_.ToLower() }
                 foreach ($App in $InstalledUser) {
-                    if ($App -notin $ConfigUser) {
+                    if ($App -ne 'scoop' -and $App -notin $ConfigUser) {
                         Write-Host "  [-] Uninstalling orphaned user app: $App" -ForegroundColor Red
                         scoop uninstall $App | Out-Null
                     }
                 }
 
-                # GC Global Apps
+                # 3. GC Global Apps
                 if ($IsAdmin -and $Data.packages.global_apps) {
-                    $InstalledGlobal = @(Get-ChildItem "$env:ProgramData\scoop\apps" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name | Where-Object { $_ -ne 'scoop' })
-                    $ConfigGlobal = @($Data.packages.global_apps)
+                    $InstalledGlobal = @(Get-ChildItem "$env:ProgramData\scoop\apps" -Directory -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name) | ForEach-Object { $_.ToLower() }
                     foreach ($App in $InstalledGlobal) {
-                        if ($App -notin $ConfigGlobal) {
+                        if ($App -ne 'scoop' -and $App -notin $ConfigGlobal) {
                             Write-Host "  [-] Uninstalling orphaned global app: $App" -ForegroundColor Red
                             scoop uninstall $App -g | Out-Null
                         }
