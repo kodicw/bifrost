@@ -94,28 +94,31 @@ if ($Data.packages) {
 
         if (Get-Command scoop -ErrorAction SilentlyContinue) {
             
-           # --- PURE MODE: GARBAGE COLLECTION ---
+            # 1. Aggressively sanitize all JSON inputs (Strip nulls, empty strings, and spaces)
+            [string[]]$ConfigBuckets = @($Data.packages.buckets) | Where-Object { ![string]::IsNullOrWhiteSpace($_) } | ForEach-Object { "$_".Trim().ToLower() }
+            [string[]]$ConfigUser = @($Data.packages.apps) | Where-Object { ![string]::IsNullOrWhiteSpace($_) } | ForEach-Object { "$_".Trim().ToLower() }
+            [string[]]$ConfigGlobal = @($Data.packages.global_apps) | Where-Object { ![string]::IsNullOrWhiteSpace($_) } | ForEach-Object { "$_".Trim().ToLower() }
+
+            # --- PURE MODE: GARBAGE COLLECTION ---
             if ($Pure) {
                 Write-Host "[!] Pure Mode: Purging unmanaged Scoop packages..." -ForegroundColor Yellow
                 
-                # 1. Sanitize JSON arrays into strict strings
-                [string[]]$ConfigUser = @($Data.packages.apps) | ForEach-Object { $_.ToString().ToLower().Trim() }
-                [string[]]$ConfigGlobal = @($Data.packages.global_apps) | ForEach-Object { $_.ToString().ToLower().Trim() }
-
-                # 2. GC User Apps
-                $InstalledUser = @(Get-ChildItem "$env:USERPROFILE\scoop\apps" -Directory -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name) | ForEach-Object { $_.ToLower() }
-                foreach ($App in $InstalledUser) {
-                    if ($App -ne 'scoop' -and $App -notin $ConfigUser) {
-                        Write-Host "  [-] Uninstalling orphaned user app: $App" -ForegroundColor Red
-                        scoop uninstall $App | Out-Null
+                # GC User Apps
+                if (Test-Path "$env:USERPROFILE\scoop\apps") {
+                    $InstalledUser = Get-ChildItem "$env:USERPROFILE\scoop\apps" -Directory | Select-Object -ExpandProperty Name | ForEach-Object { $_.ToLower() }
+                    foreach ($App in $InstalledUser) {
+                        if ($App -ne 'scoop' -and $ConfigUser -notcontains $App) {
+                            Write-Host "  [-] Uninstalling orphaned user app: $App" -ForegroundColor Red
+                            scoop uninstall $App | Out-Null
+                        }
                     }
                 }
 
-                # 3. GC Global Apps
-                if ($IsAdmin -and $Data.packages.global_apps) {
-                    $InstalledGlobal = @(Get-ChildItem "$env:ProgramData\scoop\apps" -Directory -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name) | ForEach-Object { $_.ToLower() }
+                # GC Global Apps
+                if ($IsAdmin -and (Test-Path "$env:ProgramData\scoop\apps")) {
+                    $InstalledGlobal = Get-ChildItem "$env:ProgramData\scoop\apps" -Directory | Select-Object -ExpandProperty Name | ForEach-Object { $_.ToLower() }
                     foreach ($App in $InstalledGlobal) {
-                        if ($App -ne 'scoop' -and $App -notin $ConfigGlobal) {
+                        if ($App -ne 'scoop' -and $ConfigGlobal -notcontains $App) {
                             Write-Host "  [-] Uninstalling orphaned global app: $App" -ForegroundColor Red
                             scoop uninstall $App -g | Out-Null
                         }
@@ -124,20 +127,23 @@ if ($Data.packages) {
             }
             # -------------------------------------
 
-            foreach ($B in @($Data.packages.buckets)) {
+            # 2. Add Buckets (Using sanitized list)
+            foreach ($B in $ConfigBuckets) {
                 if (-not (scoop bucket list | Select-String "^$B\s")) { scoop bucket add $B }
             }
 
-            foreach ($A in @($Data.packages.apps)) {
+            # 3. Install User Apps (Using sanitized list)
+            foreach ($A in $ConfigUser) {
                 if (-not (scoop list | Select-String "^$A\s")) { scoop install $A }
             }
 
-            if ($Data.packages.global_apps) {
-                if ($IsAdmin) {
-                    foreach ($GA in @($Data.packages.global_apps)) {
-                        if (-not (scoop list | Select-String "^$GA\s.*\[global\]")) { scoop install $GA -g }
-                    }
-                } else { Write-Host "[WARN] Skipping Global Apps (Requires Admin)." -ForegroundColor Yellow }
+            # 4. Install Global Apps (Using sanitized list)
+            if ($IsAdmin) {
+                foreach ($GA in $ConfigGlobal) {
+                    if (-not (scoop list | Select-String "^$GA\s.*\[global\]")) { scoop install $GA -g }
+                }
+            } elseif ($ConfigGlobal.Count -gt 0) { 
+                Write-Host "[WARN] Skipping Global Apps (Requires Admin)." -ForegroundColor Yellow 
             }
         }
     }
