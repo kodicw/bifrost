@@ -33,28 +33,15 @@ function Invoke-Bifrost {
             @{ 
                 users = @(@{ username = "admin-user"; fullname = "Local Administrator"; description = "Bifrost Managed Admin" });
                 packages = @{ 
-                    buckets = @("extras", "non-portable"); 
-                    apps = @("git", "curl", "vscode"); 
-                    global_apps = @("7zip", "powertoys") 
-                };
-                system = @{
-                    features = @("Microsoft-Windows-Subsystem-Linux");
-                    capabilities = @("OpenSSH.Client")
+                    apps = @("git", "edit"); 
                 };
                 networking = @{ 
                     firewall = @{ 
                         enabled = $true; allowPing = $true; enableRDP = $false; tailscaleOnly = $false; 
-                        allowedTCPPorts = @(80, 443); allowedUDPPorts = @(); 
+                        allowedTCPPorts = @(22); allowedUDPPorts = @(); 
                         allowedTCPPortRanges = @(); allowedUDPPortRanges = @()
                     } 
                 };
-                files = @(
-                    @{
-                        path = "C:\Bifrost\Managed\welcome.txt";
-                        content = "Managed by Bifrost Strict Mode.`nDo not edit manually.";
-                        encoding = "utf8"
-                    }
-                )
             } | ConvertTo-Json -Depth 10 | Out-File $Config
         }
 
