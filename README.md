@@ -1,18 +1,24 @@
 # 🌈 Bifrost: Declarative Windows Firewall
 
-Bifrost is a NixOS-inspired firewall manager for Windows. It allows you to manage your network security using a declarative JSON configuration rather than imperative CLI commands or the Windows GUI.
+Bifrost is a NixOS-inspired firewall manager for Windows. It provides a single JSON source of truth for your network security posture.
 
 
 
 ## 📂 System Structure
-* **`Sync-Bifrost.ps1`**: The logic engine. It reads the config and reconciles the Windows Firewall state.
-* **`C:\Bifrost\firewall.json`**: The local "Source of Truth" for your port configurations.
+* **`Sync-Bifrost.ps1`**: The logic engine.
+* **`C:\Bifrost\firewall.json`**: Your declarative configuration.
 
----
+## 📄 Full Configuration Example
+This example includes all modern toggles for a power user.
 
-## 🛠 Setup & Installation
-
-1. **Create the Bridge Directory**:
-   Open PowerShell as **Administrator** and run:
-   ```powershell
-   New-Item -Path "C:\Bifrost" -ItemType Directory -Force
+```json
+{
+    "Enabled": true,
+    "Pure": false,
+    "AllowPing": true,
+    "EnableRDP": false,
+    "TailscaleOnly": false,
+    "AllowedTCPPorts": [80, 443],
+    "AllowedUDPPorts": [41641, 51820],
+    "AllowedTCPPortRanges": ["8000-8010"]
+}
