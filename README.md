@@ -19,6 +19,10 @@ iex "& { $(irm 'https://raw.githubusercontent.com/kodicw/bifrost/main/bifrost.ps
 
 ```
 
+```powershell
+iex "& { $(irm 'https://raw.githubusercontent.com/kodicw/bifrost/main/bifrost.ps1') } -Pure `$true"
+```
+
 *Note: If `C:\Bifrost\config.json` does not exist, the script will automatically generate a sane default template for you on the first run.*
 
 ## 📂 System Structure
