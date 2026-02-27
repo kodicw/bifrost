@@ -92,8 +92,36 @@ if ($Data.packages) {
             }
         }
 
-        # Only proceed if Scoop is actually available now
         if (Get-Command scoop -ErrorAction SilentlyContinue) {
+            
+            # --- PURE MODE: GARBAGE COLLECTION ---
+            if ($Pure) {
+                Write-Host "[!] Pure Mode: Purging unmanaged Scoop packages..." -ForegroundColor Yellow
+                
+                # GC User Apps
+                $InstalledUser = @(Get-ChildItem "$env:USERPROFILE\scoop\apps" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name | Where-Object { $_ -ne 'scoop' })
+                $ConfigUser = @($Data.packages.apps)
+                foreach ($App in $InstalledUser) {
+                    if ($App -notin $ConfigUser) {
+                        Write-Host "  [-] Uninstalling orphaned user app: $App" -ForegroundColor Red
+                        scoop uninstall $App | Out-Null
+                    }
+                }
+
+                # GC Global Apps
+                if ($IsAdmin -and $Data.packages.global_apps) {
+                    $InstalledGlobal = @(Get-ChildItem "$env:ProgramData\scoop\apps" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name | Where-Object { $_ -ne 'scoop' })
+                    $ConfigGlobal = @($Data.packages.global_apps)
+                    foreach ($App in $InstalledGlobal) {
+                        if ($App -notin $ConfigGlobal) {
+                            Write-Host "  [-] Uninstalling orphaned global app: $App" -ForegroundColor Red
+                            scoop uninstall $App -g | Out-Null
+                        }
+                    }
+                }
+            }
+            # -------------------------------------
+
             foreach ($B in @($Data.packages.buckets)) {
                 if (-not (scoop bucket list | Select-String "^$B\s")) { scoop bucket add $B }
             }
