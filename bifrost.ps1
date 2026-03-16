@@ -204,6 +204,32 @@ function Invoke-Bifrost {
                 }
             }
         }
+        # ==========================================
+        # MODULE 6: DOWNLOADS
+        # ==========================================
+        if ($Data.downloads) {
+            Write-Host "`n[Module: Downloads]" -ForegroundColor Cyan
+            foreach ($D in @($Data.downloads)) {
+                $TargetPath = $D.path
+                $ParentDir = Split-Path $TargetPath -Parent
+        
+                if (-not (Test-Path $ParentDir)) {
+                    New-Item -ItemType Directory -Force -Path $ParentDir | Out-Null
+                }
+
+                if (-not (Test-Path $TargetPath)) {
+                    Write-Host "  [+] Downloading: $($D.url) -> $TargetPath" -ForegroundColor Green
+                    try {
+                        Invoke-WebRequest -Uri $D.url -OutFile $TargetPath -ErrorAction Stop
+                    } catch {
+                        Write-Host "  [FAIL] Could not download $($D.url)" -ForegroundColor Red
+                    }
+                } else {
+                    Write-Host "  [*] File exists: $TargetPath" -ForegroundColor DarkGray
+                }
+            }
+        }
+        
 
         # ==========================================
         # MODULE 5: FILES (Declarative State)
