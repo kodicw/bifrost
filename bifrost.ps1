@@ -29,26 +29,37 @@ function Invoke-Bifrost {
         if (-not (Test-Path "C:\Bifrost")) { New-Item -Path "C:\Bifrost" -ItemType Directory -Force | Out-Null }
 
         if (-not (Test-Path $Config)) {
-            Write-Host "[*] No config found. Generating sane default template..." -ForegroundColor Gray
-            @{ 
-                users = @(@{ username = "bifrost-user"; fullname = "Local Administrator"; description = "Bifrost Managed Admin" });
-                packages = @{ 
-                    apps = @("git", "edit"); 
-                };
-                networking = @{ 
-                    firewall = @{ 
-                        enabled = $true; allowPing = $true; enableRDP = $false; tailscaleOnly = $false; 
-                        allowedTCPPorts = @(22); allowedUDPPorts = @(); 
-                        allowedTCPPortRanges = @(); allowedUDPPortRanges = @()
-                    } 
-                };
-            } | ConvertTo-Json -Depth 10 | Out-File $Config
-        }
-
-        try {
-            $Data = Get-Content -Raw $Config | ConvertFrom-Json
-        } catch {
-            throw "[!] FATAL: Failed to parse config.json. Check for missing quotes or trailing commas!"
+            if ($Config -match "^https?://") {
+                Write-Host "[*] Downloading remote config: $Config" -ForegroundColor Gray
+                try {
+                    $RemoteData = Invoke-WebRequest -Uri $Config -UseBasicParsing -ErrorAction Stop
+                    $Data = $RemoteData.Content | ConvertFrom-Json
+                } catch {
+                    throw "[!] FATAL: Failed to download or parse remote config from $Config"
+                }
+            } else {
+                Write-Host "[*] No config found. Generating sane default template..." -ForegroundColor Gray
+                @{ 
+                    users = @(@{ username = "bifrost-user"; fullname = "Local Administrator"; description = "Bifrost Managed Admin" });
+                    packages = @{ 
+                        apps = @("git", "edit"); 
+                    };
+                    networking = @{ 
+                        firewall = @{ 
+                            enabled = $true; allowPing = $true; enableRDP = $false; tailscaleOnly = $false; 
+                            allowedTCPPorts = @(22); allowedUDPPorts = @(); 
+                            allowedTCPPortRanges = @(); allowedUDPPortRanges = @()
+                        } 
+                    };
+                } | ConvertTo-Json -Depth 10 | Out-File $Config
+                $Data = Get-Content -Raw $Config | ConvertFrom-Json
+            }
+        } else {
+            try {
+                $Data = Get-Content -Raw $Config | ConvertFrom-Json
+            } catch {
+                throw "[!] FATAL: Failed to parse config.json. Check for missing quotes or trailing commas!"
+            }
         }
 
         # ==========================================
@@ -205,7 +216,7 @@ function Invoke-Bifrost {
             }
         }
         # ==========================================
-        # MODULE 6: DOWNLOADS
+        # MODULE 5: DOWNLOADS
         # ==========================================
         if ($Data.downloads) {
             Write-Host "`n[Module: Downloads]" -ForegroundColor Cyan
@@ -232,7 +243,7 @@ function Invoke-Bifrost {
         
 
         # ==========================================
-        # MODULE 5: FILES (Declarative State)
+        # MODULE 6: FILES (Declarative State)
         # ==========================================
         if ($Data.files) {
             Write-Host "`n[Module: Files]" -ForegroundColor Cyan
@@ -248,6 +259,70 @@ function Invoke-Bifrost {
                 $Encoding = if ($F.encoding) { $F.encoding } else { "utf8" }
                 Write-Host "  [*] Enforcing File State: $TargetPath" -ForegroundColor Gray
                 Set-Content -Path $TargetPath -Value $F.content -Encoding $Encoding -Force
+            }
+        }
+
+        # ==========================================
+        # MODULE 7: REGISTRY
+        # ==========================================
+        if ($Data.registry) {
+            Write-Host "`n[Module: Registry]" -ForegroundColor Cyan
+            foreach ($R in @($Data.registry)) {
+                $Path = $R.path
+                $Name = $R.name
+                $Value = $R.value
+                $Type = if ($R.type) { $R.type } else { "String" }
+
+                if (-not (Test-Path $Path)) {
+                    Write-Host "  [+] Creating Registry Key: $Path" -ForegroundColor Green
+                    New-Item -Path $Path -Force | Out-Null
+                }
+
+                Write-Host "  [*] Enforcing Registry Value: $Path\$Name = $Value ($Type)" -ForegroundColor Gray
+                Set-ItemProperty -Path $Path -Name $Name -Value $Value -Type $Type -Force
+            }
+        }
+
+        # ==========================================
+        # MODULE 8: SERVICES
+        # ==========================================
+        if ($Data.services) {
+            Write-Host "`n[Module: Services]" -ForegroundColor Cyan
+            if (-not $IsAdmin) { Write-Host "[SKIP] Services require Administrator privileges." -ForegroundColor Red } 
+            else {
+                foreach ($S in @($Data.services)) {
+                    $Service = Get-Service -Name $S.name -ErrorAction SilentlyContinue
+                    if ($null -ne $Service) {
+                        if ($S.startup) {
+                            Write-Host "  [*] Setting Startup: $($S.name) -> $($S.startup)" -ForegroundColor Gray
+                            Set-Service -Name $S.name -StartupType $S.startup
+                        }
+                        if ($S.state -eq "Running" -and $Service.Status -ne "Running") {
+                            Write-Host "  [+] Starting Service: $($S.name)" -ForegroundColor Green
+                            Start-Service -Name $S.name
+                        } elseif ($S.state -eq "Stopped" -and $Service.Status -ne "Stopped") {
+                            Write-Host "  [-] Stopping Service: $($S.name)" -ForegroundColor Red
+                            Stop-Service -Name $S.name
+                        }
+                    } else {
+                        Write-Host "  [FAIL] Service not found: $($S.name)" -ForegroundColor Red
+                    }
+                }
+            }
+        }
+
+        # ==========================================
+        # MODULE 9: SCRIPTS (Post-Provisioning)
+        # ==========================================
+        if ($Data.scripts) {
+            Write-Host "`n[Module: Scripts]" -ForegroundColor Cyan
+            foreach ($S in @($Data.scripts)) {
+                Write-Host "  [*] Executing: $($S.name)" -ForegroundColor Gray
+                if ($S.command) {
+                    & ([scriptblock]::Create($S.command))
+                } elseif ($S.path -and (Test-Path $S.path)) {
+                    & $S.path
+                }
             }
         }
 

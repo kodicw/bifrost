@@ -1,0 +1,69 @@
+{
+  "users": [
+    {
+      "username": "container-admin",
+      "fullname": "Container Host Administrator",
+      "description": "Bifrost-managed admin for container operations"
+    }
+  ],
+  "packages": {
+    "buckets": ["extras"],
+    "apps": ["git", "curl", "docker"],
+    "global_apps": [
+      "7zip",
+      "nomad"
+    ]
+  },
+  "system": {
+    "features": [
+      "Containers",
+      "Microsoft-Hyper-V",
+      "Microsoft-Windows-Subsystem-Linux"
+    ],
+    "capabilities": [
+      "OpenSSH.Client",
+      "OpenSSH.Server"
+    ]
+  },
+  "networking": {
+    "firewall": {
+      "enabled": true,
+      "allowPing": true,
+      "enableRDP": true,
+      "tailscaleOnly": false,
+      "allowedTCPPorts": [22, 2375, 2376, 4646, 4647, 4648],
+      "allowedUDPPorts": [4648]
+    }
+  },
+  "registry": [
+    {
+      "path": "HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\System",
+      "name": "LocalAccountTokenFilterPolicy",
+      "value": 1,
+      "type": "DWord"
+    }
+  ],
+  "services": [
+    {
+      "name": "docker",
+      "state": "Running",
+      "startup": "Automatic"
+    },
+    {
+      "name": "sshd",
+      "state": "Running",
+      "startup": "Automatic"
+    },
+    {
+      "name": "nomad",
+      "state": "Running",
+      "startup": "Automatic"
+    }
+  ],
+  "scripts": [
+    {
+      "name": "Configure Nomad from Mounted Nix Drive",
+      "command": "powershell -Command { $NixConfig = 'D:\\nomad\\config.hcl'; if (Test-Path $NixConfig) { Write-Host 'Found Nix-managed Nomad config at D:\\...'; & nomad agent -config=$NixConfig -detach } else { Write-Host 'Nix config not found on D: drive yet.' } }"
+    }
+  ]
+}
