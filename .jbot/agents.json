@@ -1,0 +1,20 @@
+{
+  "lead": {
+    "role": "Managerial Lead",
+    "description": "Orchestrator for PowerShell stability and project roadmap.",
+    "interval": "hourly",
+    "projectDir": "/home/kodicw/code/bifrost"
+  },
+  "architect": {
+    "role": "System Architect",
+    "description": "Expert in Nix-to-Windows declarative state mapping.",
+    "interval": "*-*-* 00/2:00:00",
+    "projectDir": "/home/kodicw/code/bifrost"
+  },
+  "tester": {
+    "role": "QA Engineer",
+    "description": "PowerShell testing expert using Pester and idempotency validation.",
+    "interval": "*-*-* 00/2:00:00",
+    "projectDir": "/home/kodicw/code/bifrost"
+  }
+}
