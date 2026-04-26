@@ -7,16 +7,20 @@
     jbot.url = "github:kodicw/jbot";
   };
 
-  outputs = { self, nixpkgs, flake-utils, jbot, ... }:
+  outputs = { nixpkgs, flake-utils, ... }:
+    let
+      # Use nixpkgs lib for the library
+      lib = import ./lib.nix { inherit (nixpkgs) lib; };
+    in
     flake-utils.lib.eachSystem [ "x86_64-linux" "aarch64-linux" ] (system:
       let
         pkgs = import nixpkgs { inherit system; };
       in
       {
+        inherit lib;
         devShells.default = pkgs.mkShell {
           packages = [
             pkgs.powershell
-            pkgs.jbot-cli # From the system environment or jbot input
             pkgs.nb
             pkgs.git
           ];
@@ -29,7 +33,7 @@
       }
     ) // {
       # Expose a Home Manager module to schedule Bifrost agents
-      homeManagerModules.default = { config, lib, pkgs, ... }: {
+      homeManagerModules.default = _: {
         programs.jbot.agents = {
           bifrost-lead = {
             enable = true;

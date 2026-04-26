@@ -1,3 +1,6 @@
+# Context: [[nb:jbot:126]]
+# ADR: PowerShell Idempotency and Modularity
+
 function Invoke-Bifrost {
     [CmdletBinding()]
     param (
@@ -13,319 +16,316 @@ function Invoke-Bifrost {
         [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
         # ==========================================
-        # STAGE 0: PRE-FLIGHT & BOOTSTRAP
+        # STAGE 0: PRE-FLIGHT
         # ==========================================
-        Write-Host "[Stage 0: Pre-Flight Check]" -ForegroundColor Magenta
-
-        $Policy = Get-ExecutionPolicy
-        if ($Policy -in @("Restricted", "AllSigned")) {
-            Write-Host "[!] Policy is $Policy. Elevating to RemoteSigned..." -ForegroundColor Yellow
-            try { Set-ExecutionPolicy RemoteSigned -Scope CurrentUser -Force -ErrorAction Stop } 
-            catch { Write-Host "[FAIL] Policy locked by System/Domain." -ForegroundColor Red }
-        }
+        Write-BifrostLog "[Stage 0: Pre-Flight Check]" -Color Magenta
 
         $IsAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+        $Policy = Get-ExecutionPolicy
+        
+        if ($Policy -in @("Restricted", "AllSigned")) {
+            Write-BifrostLog "Policy is $Policy. Attempting elevation..." -Color Yellow
+            try { Set-ExecutionPolicy RemoteSigned -Scope CurrentUser -Force -ErrorAction Stop } 
+            catch { Write-BifrostLog "Policy locked by System/Domain." -Color Red }
+        }
 
-        if (-not (Test-Path "C:\Bifrost")) { New-Item -Path "C:\Bifrost" -ItemType Directory -Force | Out-Null }
+        if (-not (Test-Path "C:\Bifrost")) { 
+            Write-BifrostLog "Creating Bifrost root directory..." -Color Gray
+            New-Item -Path "C:\Bifrost" -ItemType Directory -Force | Out-Null 
+        }
 
-        if (-not (Test-Path $Config)) {
-            if ($Config -match "^https?://") {
-                Write-Host "[*] Downloading remote config: $Config" -ForegroundColor Gray
-                try {
-                    $RemoteData = Invoke-WebRequest -Uri $Config -UseBasicParsing -ErrorAction Stop
-                    $Data = $RemoteData.Content | ConvertFrom-Json
-                } catch {
-                    throw "[!] FATAL: Failed to download or parse remote config from $Config"
-                }
-            } else {
-                Write-Host "[*] No config found. Generating sane default template..." -ForegroundColor Gray
-                @{ 
-                    users = @(@{ username = "bifrost-user"; fullname = "Local Administrator"; description = "Bifrost Managed Admin" });
-                    packages = @{ 
-                        apps = @("git", "edit"); 
-                    };
-                    networking = @{ 
-                        firewall = @{ 
-                            enabled = $true; allowPing = $true; enableRDP = $false; tailscaleOnly = $false; 
-                            allowedTCPPorts = @(22); allowedUDPPorts = @(); 
-                            allowedTCPPortRanges = @(); allowedUDPPortRanges = @()
-                        } 
-                    };
-                } | ConvertTo-Json -Depth 10 | Out-File $Config
-                $Data = Get-Content -Raw $Config | ConvertFrom-Json
+        $Data = Get-BifrostConfig -ConfigPath $Config
+
+        # ==========================================
+        # RECONCILIATION LOOP
+        # ==========================================
+        Sync-BifrostUsers -Users $Data.users -IsAdmin $IsAdmin
+        Sync-BifrostPackages -Packages $Data.packages -IsAdmin $IsAdmin -Pure $Pure -Policy $Policy
+        Sync-BifrostSystem -System $Data.system -IsAdmin $IsAdmin
+        Sync-BifrostNetworking -Networking $Data.networking -IsAdmin $IsAdmin -Pure $Pure
+        Sync-BifrostDownloads -Downloads $Data.downloads
+        Sync-BifrostFiles -Files $Data.files
+        Sync-BifrostRegistry -Registry $Data.registry
+        Sync-BifrostServices -Services $Data.services -IsAdmin $IsAdmin
+        Sync-BifrostScripts -Scripts $Data.scripts
+
+        Write-BifrostLog "`n[✓] Bifrost: System reconciliation complete." -Color Green
+    }
+}
+
+# ==========================================
+# INTERNAL MODULES
+# ==========================================
+
+function Get-BifrostConfig {
+    param([string]$ConfigPath)
+    if (-not (Test-Path $ConfigPath)) {
+        if ($ConfigPath -match "^https?://") {
+            Write-BifrostLog "Downloading remote config: $ConfigPath" -Color Gray
+            try {
+                $RemoteData = Invoke-WebRequest -Uri $ConfigPath -UseBasicParsing -ErrorAction Stop
+                return $RemoteData.Content | ConvertFrom-Json
+            } catch {
+                throw "[!] FATAL: Failed to download or parse remote config from $ConfigPath"
             }
         } else {
-            try {
-                $Data = Get-Content -Raw $Config | ConvertFrom-Json
-            } catch {
-                throw "[!] FATAL: Failed to parse config.json. Check for missing quotes or trailing commas!"
+            Write-BifrostLog "No config found. Generating sane default template..." -Color Gray
+            $Default = @{ 
+                users = @(@{ username = "bifrost-user"; fullname = "Local Administrator"; description = "Bifrost Managed Admin" });
+                packages = @{ apps = @("git", "neovim"); buckets = @("extras") };
+                networking = @{ firewall = @{ enabled = $true; allowPing = $true; allowedTCPPorts = @(22) } };
             }
+            $Default | ConvertTo-Json -Depth 10 | Out-File $ConfigPath
+            return $Default
         }
-
-        # ==========================================
-        # MODULE 1: USERS (Admin Only)
-        # ==========================================
-        if ($Data.users) {
-            Write-Host "`n[Module: Users]" -ForegroundColor Cyan
-            if (-not $IsAdmin) { Write-Host "[SKIP] Requires Administrator privileges." -ForegroundColor Red } 
-            else {
-                foreach ($U in @($Data.users)) {
-                    $Exists = $null -ne (Get-LocalUser -Name $U.username -ErrorAction SilentlyContinue)
-                    if (-not $Exists) {
-                        Write-Host "[+] Creating User: $($U.username) (Admin must set password)" -ForegroundColor Green
-                        New-LocalUser -Name $U.username -FullName $U.fullname -Description $U.description -NoPassword | Out-Null
-                    } else {
-                        Write-Host "[*] Updating Metadata: $($U.username)" -ForegroundColor Gray
-                        Set-LocalUser -Name $U.username -FullName $U.fullname -Description $U.description
-                    }
-                }
-            }
+    } else {
+        try {
+            return Get-Content -Raw $ConfigPath | ConvertFrom-Json
+        } catch {
+            throw "[!] FATAL: Failed to parse config.json. Check for syntax errors!"
         }
-
-        # ==========================================
-        # MODULE 2: PACKAGES (SCOOP)
-        # ==========================================
-        if ($Data.packages) {
-            Write-Host "`n[Module: Packages]" -ForegroundColor Cyan
-            if ($Policy -eq "Restricted") { Write-Host "[SKIP] Restricted ExecutionPolicy." -ForegroundColor Red } 
-            else {
-                if (-not (Get-Command scoop -ErrorAction SilentlyContinue)) {
-                    if ($IsAdmin) {
-                        Write-Host "[!] Cannot install Scoop as Administrator. Please run this script in a non-admin prompt first to install Scoop." -ForegroundColor Red
-                    } else {
-                        Write-Host "[*] Installing Scoop..." -ForegroundColor Yellow
-                        irm get.scoop.sh | iex
-                    }
-                }
-
-                if (Get-Command scoop -ErrorAction SilentlyContinue) {
-                    
-                    [string[]]$ConfigBuckets = @($Data.packages.buckets) | Where-Object { ![string]::IsNullOrWhiteSpace($_) } | ForEach-Object { "$_".Trim().ToLower() }
-                    [string[]]$ConfigUser = @($Data.packages.apps) | Where-Object { ![string]::IsNullOrWhiteSpace($_) } | ForEach-Object { "$_".Trim().ToLower() }
-                    [string[]]$ConfigGlobal = @($Data.packages.global_apps) | Where-Object { ![string]::IsNullOrWhiteSpace($_) } | ForEach-Object { "$_".Trim().ToLower() }
-
-                    if ($Pure.IsPresent) {
-                        Write-Host "[!] Pure Mode: Purging unmanaged Scoop packages..." -ForegroundColor Yellow
-                        
-                        if (Test-Path "$env:USERPROFILE\scoop\apps") {
-                            $InstalledUser = Get-ChildItem "$env:USERPROFILE\scoop\apps" -Directory | Select-Object -ExpandProperty Name | ForEach-Object { $_.ToLower() }
-                            foreach ($App in $InstalledUser) {
-                                if ($App -ne 'scoop' -and $ConfigUser -notcontains $App) {
-                                    Write-Host "  [-] Uninstalling orphaned user app: $App" -ForegroundColor Red
-                                    scoop uninstall $App | Out-Null
-                                }
-                            }
-                        }
-
-                        if ($IsAdmin -and (Test-Path "$env:ProgramData\scoop\apps")) {
-                            $InstalledGlobal = Get-ChildItem "$env:ProgramData\scoop\apps" -Directory | Select-Object -ExpandProperty Name | ForEach-Object { $_.ToLower() }
-                            foreach ($App in $InstalledGlobal) {
-                                if ($App -ne 'scoop' -and $ConfigGlobal -notcontains $App) {
-                                    Write-Host "  [-] Uninstalling orphaned global app: $App" -ForegroundColor Red
-                                    scoop uninstall $App -g | Out-Null
-                                }
-                            }
-                        }
-                    }
-
-                    foreach ($B in $ConfigBuckets) {
-                        if (-not (scoop bucket list | Select-String "^$B\s")) { scoop bucket add $B }
-                    }
-
-                    foreach ($A in $ConfigUser) {
-                        if (-not (scoop list | Select-String "^$A\s")) { scoop install $A }
-                    }
-
-                    if ($IsAdmin) {
-                        foreach ($GA in $ConfigGlobal) {
-                            if (-not (scoop list | Select-String "^$GA\s.*\[global\]")) { scoop install $GA -g }
-                        }
-                    } elseif ($ConfigGlobal.Count -gt 0) { 
-                        Write-Host "[WARN] Skipping Global Apps (Requires Admin)." -ForegroundColor Yellow 
-                    }
-                }
-            }
-        }
-
-        # ==========================================
-        # MODULE 3: SYSTEM FEATURES
-        # ==========================================
-        if ($Data.system) {
-            Write-Host "`n[Module: System]" -ForegroundColor Cyan
-            if (-not $IsAdmin) { Write-Host "[SKIP] System features require Administrator privileges." -ForegroundColor Red } 
-            else {
-                foreach ($F in @($Data.system.features)) {
-                    $Feature = Get-WindowsOptionalFeature -Online -FeatureName $F -ErrorAction SilentlyContinue
-                    if ($null -ne $Feature -and $Feature.State -ne 'Enabled') {
-                        Write-Host "[+] Enabling Feature: $F" -ForegroundColor Green
-                        Enable-WindowsOptionalFeature -Online -FeatureName $F -NoRestart | Out-Null
-                    }
-                }
-
-                foreach ($C in @($Data.system.capabilities)) {
-                    $Cap = Get-WindowsCapability -Online -Name "$C*" -ErrorAction SilentlyContinue | Where-Object State -eq 'NotPresent'
-                    if ($Cap) {
-                        Write-Host "[+] Adding Capability: $($Cap.Name)" -ForegroundColor Green
-                        Add-WindowsCapability -Online -Name $Cap.Name | Out-Null
-                    }
-                }
-            }
-        }
-
-        # ==========================================
-        # MODULE 4: NETWORKING (FIREWALL)
-        # ==========================================
-        if ($Data.networking.firewall) {
-            Write-Host "`n[Module: Networking]" -ForegroundColor Cyan
-            if (-not $IsAdmin) { Write-Host "[SKIP] Requires Administrator privileges." -ForegroundColor Red } 
-            else {
-                $FW = $Data.networking.firewall
-                $Tag = "BifrostManaged"
-
-                if ($Pure.IsPresent) {
-                    Write-Host "[!] Pure Mode: Purging Bifrost-managed rules..." -ForegroundColor Yellow
-                    Remove-NetFirewallRule -Group $Tag -ErrorAction SilentlyContinue
-                }
-
-                $ProfileState = if ($FW.enabled) { "True" } else { "False" }
-                Set-NetFirewallProfile -All -Enabled $ProfileState
-
-                if ($FW.enabled) {
-                    function Add-BifrostRule {
-                        param($Name, $Proto, $Port, $Remote = "Any")
-                        $ID = "Bifrost-$Name"
-                        if (-not (Get-NetFirewallRule -Name $ID -ErrorAction SilentlyContinue)) {
-                            Write-Host "  -> [+] Creating Rule: $ID ($Proto $Port -> $Remote)" -ForegroundColor Green
-                            New-NetFirewallRule -Name $ID -DisplayName $ID -Group $Tag -Protocol $Proto -LocalPort $Port -RemoteAddress $Remote -Action Allow | Out-Null
-                        } else {
-                            Write-Host "  -> [~] Rule Exists: $ID" -ForegroundColor DarkGray
-                        }
-                    }
-
-                    if ($FW.allowPing) { Add-BifrostRule -Name "Ping" -Proto ICMPv4 -Port Any }
-                    if ($FW.enableRDP) { Add-BifrostRule -Name "RDP" -Proto TCP -Port 3389 }
-                    
-                    $Remote = if ($FW.tailscaleOnly) { "100.64.0.0/10" } else { "Any" }
-
-                    foreach ($P in @($FW.allowedTCPPorts)) { Add-BifrostRule -Name "TCP-$P" -Proto TCP -Port $P -Remote $Remote }
-                    foreach ($P in @($FW.allowedUDPPorts)) { Add-BifrostRule -Name "UDP-$P" -Proto UDP -Port $P -Remote $Remote }
-                    
-                    foreach ($R in @($FW.allowedTCPPortRanges)) { Add-BifrostRule -Name "TCP-Range-$R" -Proto TCP -Port $R -Remote $Remote }
-                    foreach ($R in @($FW.allowedUDPPortRanges)) { Add-BifrostRule -Name "UDP-Range-$R" -Proto UDP -Port $R -Remote $Remote }
-                }
-            }
-        }
-        # ==========================================
-        # MODULE 5: DOWNLOADS
-        # ==========================================
-        if ($Data.downloads) {
-            Write-Host "`n[Module: Downloads]" -ForegroundColor Cyan
-            foreach ($D in @($Data.downloads)) {
-                $TargetPath = $D.path
-                $ParentDir = Split-Path $TargetPath -Parent
-        
-                if (-not (Test-Path $ParentDir)) {
-                    New-Item -ItemType Directory -Force -Path $ParentDir | Out-Null
-                }
-
-                if (-not (Test-Path $TargetPath)) {
-                    Write-Host "  [+] Downloading: $($D.url) -> $TargetPath" -ForegroundColor Green
-                    try {
-                        Invoke-WebRequest -Uri $D.url -OutFile $TargetPath -ErrorAction Stop
-                    } catch {
-                        Write-Host "  [FAIL] Could not download $($D.url)" -ForegroundColor Red
-                    }
-                } else {
-                    Write-Host "  [*] File exists: $TargetPath" -ForegroundColor DarkGray
-                }
-            }
-        }
-        
-
-        # ==========================================
-        # MODULE 6: FILES (Declarative State)
-        # ==========================================
-        if ($Data.files) {
-            Write-Host "`n[Module: Files]" -ForegroundColor Cyan
-            foreach ($F in @($Data.files)) {
-                $TargetPath = $F.path
-                $ParentDir = Split-Path $TargetPath -Parent
-                
-                if (-not (Test-Path $ParentDir)) {
-                    Write-Host "  [+] Creating Directory: $ParentDir" -ForegroundColor Green
-                    New-Item -ItemType Directory -Force -Path $ParentDir | Out-Null
-                }
-                
-                $Encoding = if ($F.encoding) { $F.encoding } else { "utf8" }
-                Write-Host "  [*] Enforcing File State: $TargetPath" -ForegroundColor Gray
-                Set-Content -Path $TargetPath -Value $F.content -Encoding $Encoding -Force
-            }
-        }
-
-        # ==========================================
-        # MODULE 7: REGISTRY
-        # ==========================================
-        if ($Data.registry) {
-            Write-Host "`n[Module: Registry]" -ForegroundColor Cyan
-            foreach ($R in @($Data.registry)) {
-                $Path = $R.path
-                $Name = $R.name
-                $Value = $R.value
-                $Type = if ($R.type) { $R.type } else { "String" }
-
-                if (-not (Test-Path $Path)) {
-                    Write-Host "  [+] Creating Registry Key: $Path" -ForegroundColor Green
-                    New-Item -Path $Path -Force | Out-Null
-                }
-
-                Write-Host "  [*] Enforcing Registry Value: $Path\$Name = $Value ($Type)" -ForegroundColor Gray
-                Set-ItemProperty -Path $Path -Name $Name -Value $Value -Type $Type -Force
-            }
-        }
-
-        # ==========================================
-        # MODULE 8: SERVICES
-        # ==========================================
-        if ($Data.services) {
-            Write-Host "`n[Module: Services]" -ForegroundColor Cyan
-            if (-not $IsAdmin) { Write-Host "[SKIP] Services require Administrator privileges." -ForegroundColor Red } 
-            else {
-                foreach ($S in @($Data.services)) {
-                    $Service = Get-Service -Name $S.name -ErrorAction SilentlyContinue
-                    if ($null -ne $Service) {
-                        if ($S.startup) {
-                            Write-Host "  [*] Setting Startup: $($S.name) -> $($S.startup)" -ForegroundColor Gray
-                            Set-Service -Name $S.name -StartupType $S.startup
-                        }
-                        if ($S.state -eq "Running" -and $Service.Status -ne "Running") {
-                            Write-Host "  [+] Starting Service: $($S.name)" -ForegroundColor Green
-                            Start-Service -Name $S.name
-                        } elseif ($S.state -eq "Stopped" -and $Service.Status -ne "Stopped") {
-                            Write-Host "  [-] Stopping Service: $($S.name)" -ForegroundColor Red
-                            Stop-Service -Name $S.name
-                        }
-                    } else {
-                        Write-Host "  [FAIL] Service not found: $($S.name)" -ForegroundColor Red
-                    }
-                }
-            }
-        }
-
-        # ==========================================
-        # MODULE 9: SCRIPTS (Post-Provisioning)
-        # ==========================================
-        if ($Data.scripts) {
-            Write-Host "`n[Module: Scripts]" -ForegroundColor Cyan
-            foreach ($S in @($Data.scripts)) {
-                Write-Host "  [*] Executing: $($S.name)" -ForegroundColor Gray
-                if ($S.command) {
-                    & ([scriptblock]::Create($S.command))
-                } elseif ($S.path -and (Test-Path $S.path)) {
-                    & $S.path
-                }
-            }
-        }
-
-        Write-Host "`n[✓] Bifrost: System reconciliation complete." -ForegroundColor Green
     }
+}
+
+function Sync-BifrostUsers {
+    param($Users, $IsAdmin)
+    if (-not $Users) { return }
+    Write-BifrostLog "`n[Module: Users]"
+    if (-not $IsAdmin) { Write-BifrostLog "Requires Administrator privileges." -Color Red; return }
+
+    foreach ($U in @($Users)) {
+        $Existing = Get-LocalUser -Name $U.username -ErrorAction SilentlyContinue
+        if ($null -eq $Existing) {
+            Write-BifrostLog "Creating User: $($U.username)" -Color Green -Indent
+            New-LocalUser -Name $U.username -FullName $U.fullname -Description $U.description -NoPassword | Out-Null
+        } else {
+            if ($Existing.FullName -ne $U.fullname -or $Existing.Description -ne $U.description) {
+                Write-BifrostLog "Updating Metadata: $($U.username)" -Color Gray -Indent
+                Set-LocalUser -Name $U.username -FullName $U.fullname -Description $U.description
+            } else {
+                Write-BifrostLog "User is correct: $($U.username)" -Color DarkGray -Indent
+            }
+        }
+    }
+}
+
+function Sync-BifrostPackages {
+    param($Packages, $IsAdmin, $Pure, $Policy)
+    if (-not $Packages) { return }
+    Write-BifrostLog "`n[Module: Packages]"
+    if ($Policy -eq "Restricted") { Write-BifrostLog "Restricted ExecutionPolicy prevents Scoop usage." -Color Red; return }
+
+    if (-not (Get-Command scoop -ErrorAction SilentlyContinue)) {
+        if ($IsAdmin) {
+            Write-BifrostLog "Cannot install Scoop as Administrator. Run in non-admin prompt first." -Color Red
+            return
+        } else {
+            Write-BifrostLog "Installing Scoop..." -Color Yellow -Indent
+            irm get.scoop.sh | iex
+        }
+    }
+
+    if (Get-Command scoop -ErrorAction SilentlyContinue) {
+        $ConfigBuckets = @($Packages.buckets) | Where-Object { ![string]::IsNullOrWhiteSpace($_) } | ForEach-Object { "$_".Trim().ToLower() }
+        $ConfigUser = @($Packages.apps) | Where-Object { ![string]::IsNullOrWhiteSpace($_) } | ForEach-Object { "$_".Trim().ToLower() }
+        $ConfigGlobal = @($Packages.global_apps) | Where-Object { ![string]::IsNullOrWhiteSpace($_) } | ForEach-Object { "$_".Trim().ToLower() }
+
+        if ($Pure) {
+            Write-BifrostLog "Pure Mode: Purging unmanaged Scoop packages..." -Color Yellow -Indent
+            $InstalledUser = scoop list | ForEach-Object { if ($_ -match "^(\S+)\s+") { $matches[1].ToLower() } }
+            foreach ($App in $InstalledUser) {
+                if ($App -ne 'scoop' -and $ConfigUser -notcontains $App) {
+                    Write-BifrostLog "Uninstalling orphaned user app: $App" -Color Red -Indent
+                    scoop uninstall $App | Out-Null
+                }
+            }
+        }
+
+        foreach ($B in $ConfigBuckets) {
+            if (-not (scoop bucket list | Select-String "^$B\s")) { 
+                Write-BifrostLog "Adding Bucket: $B" -Color Green -Indent
+                scoop bucket add $B | Out-Null
+            }
+        }
+
+        foreach ($A in $ConfigUser) {
+            if (-not (scoop list | Select-String "^$A\s")) { 
+                Write-BifrostLog "Installing App: $A" -Color Green -Indent
+                scoop install $A | Out-Null
+            }
+        }
+
+        if ($IsAdmin -and $ConfigGlobal.Count -gt 0) {
+            foreach ($GA in $ConfigGlobal) {
+                if (-not (scoop list | Select-String "^$GA\s.*\[global\]")) { 
+                    Write-BifrostLog "Installing Global App: $GA" -Color Green -Indent
+                    scoop install $GA -g | Out-Null
+                }
+            }
+        }
+    }
+}
+
+function Sync-BifrostSystem {
+    param($System, $IsAdmin)
+    if (-not $System) { return }
+    Write-BifrostLog "`n[Module: System]"
+    if (-not $IsAdmin) { Write-BifrostLog "Requires Administrator privileges." -Color Red; return }
+
+    foreach ($F in @($System.features)) {
+        $Feature = Get-WindowsOptionalFeature -Online -FeatureName $F -ErrorAction SilentlyContinue
+        if ($null -ne $Feature -and $Feature.State -ne 'Enabled') {
+            Write-BifrostLog "Enabling Feature: $F" -Color Green -Indent
+            Enable-WindowsOptionalFeature -Online -FeatureName $F -NoRestart | Out-Null
+        }
+    }
+
+    foreach ($C in @($System.capabilities)) {
+        $Cap = Get-WindowsCapability -Online -Name "$C*" -ErrorAction SilentlyContinue | Where-Object State -eq 'NotPresent'
+        if ($Cap) {
+            Write-BifrostLog "Adding Capability: $($Cap.Name)" -Color Green -Indent
+            Add-WindowsCapability -Online -Name $Cap.Name | Out-Null
+        }
+    }
+}
+
+function Sync-BifrostNetworking {
+    param($Networking, $IsAdmin, $Pure)
+    if (-not $Networking.firewall) { return }
+    Write-BifrostLog "`n[Module: Networking]"
+    if (-not $IsAdmin) { Write-BifrostLog "Requires Administrator privileges." -Color Red; return }
+
+    $FW = $Networking.firewall
+    $Tag = "BifrostManaged"
+
+    if ($Pure) {
+        Write-BifrostLog "Pure Mode: Purging managed firewall rules..." -Color Yellow -Indent
+        Remove-NetFirewallRule -Group $Tag -ErrorAction SilentlyContinue
+    }
+
+    $ProfileState = if ($FW.enabled) { "True" } else { "False" }
+    Set-NetFirewallProfile -All -Enabled $ProfileState
+
+    if ($FW.enabled) {
+        $Rules = @()
+        if ($FW.allowPing) { $Rules += @{ Name="Ping"; Proto="ICMPv4"; Port="Any" } }
+        if ($FW.enableRDP) { $Rules += @{ Name="RDP"; Proto="TCP"; Port=3389 } }
+        
+        $Remote = if ($FW.tailscaleOnly) { "100.64.0.0/10" } else { "Any" }
+
+        foreach ($P in @($FW.allowedTCPPorts)) { $Rules += @{ Name="TCP-$P"; Proto="TCP"; Port=$P } }
+        foreach ($P in @($FW.allowedUDPPorts)) { $Rules += @{ Name="UDP-$P"; Proto="UDP"; Port=$P } }
+
+        foreach ($R in $Rules) {
+            $ID = "Bifrost-$($R.Name)"
+            $Existing = Get-NetFirewallRule -Name $ID -ErrorAction SilentlyContinue
+            if (-not $Existing) {
+                Write-BifrostLog "Creating Rule: $ID ($($R.Proto) $($R.Port))" -Color Green -Indent
+                New-NetFirewallRule -Name $ID -DisplayName $ID -Group $Tag -Protocol $R.Proto -LocalPort $R.Port -RemoteAddress $Remote -Action Allow | Out-Null
+            }
+        }
+    }
+}
+
+function Sync-BifrostDownloads {
+    param($Downloads)
+    if (-not $Downloads) { return }
+    Write-BifrostLog "`n[Module: Downloads]"
+    foreach ($D in @($Downloads)) {
+        $TargetPath = $D.path
+        if (-not (Test-Path $TargetPath)) {
+            Write-BifrostLog "Downloading: $($D.url) -> $TargetPath" -Color Green -Indent
+            try {
+                $Parent = Split-Path $TargetPath -Parent
+                if (-not (Test-Path $Parent)) { New-Item -ItemType Directory -Force -Path $Parent | Out-Null }
+                Invoke-WebRequest -Uri $D.url -OutFile $TargetPath -ErrorAction Stop
+            } catch {
+                Write-BifrostLog "Download failed: $($D.url)" -Color Red -Indent
+            }
+        } else {
+            Write-BifrostLog "File exists: $TargetPath" -Color DarkGray -Indent
+        }
+    }
+}
+
+function Sync-BifrostFiles {
+    param($Files)
+    if (-not $Files) { return }
+    Write-BifrostLog "`n[Module: Files]"
+    foreach ($F in @($Files)) {
+        $TargetPath = $F.path
+        $ParentDir = Split-Path $TargetPath -Parent
+        if (-not (Test-Path $ParentDir)) { New-Item -ItemType Directory -Force -Path $ParentDir | Out-Null }
+        
+        $Encoding = if ($F.encoding) { $F.encoding } else { "utf8" }
+        $CurrentContent = if (Test-Path $TargetPath) { Get-Content -Raw $TargetPath } else { $null }
+
+        if ($CurrentContent -ne $F.content) {
+            Write-BifrostLog "Enforcing File: $TargetPath" -Color Green -Indent
+            Set-Content -Path $TargetPath -Value $F.content -Encoding $Encoding -Force
+        } else {
+            Write-BifrostLog "File is correct: $TargetPath" -Color DarkGray -Indent
+        }
+    }
+}
+
+function Sync-BifrostRegistry {
+    param($Registry)
+    if (-not $Registry) { return }
+    Write-BifrostLog "`n[Module: Registry]"
+    foreach ($R in @($Registry)) {
+        if (-not (Test-Path $R.path)) { New-Item -Path $R.path -Force | Out-Null }
+        
+        $CurrentValue = Get-ItemProperty -Path $R.path -Name $R.name -ErrorAction SilentlyContinue
+        $Type = if ($R.type) { $R.type } else { "String" }
+
+        if ($null -eq $CurrentValue -or $CurrentValue.$($R.name) -ne $R.value) {
+            Write-BifrostLog "Enforcing Registry: $($R.path)\$($R.name)" -Color Green -Indent
+            Set-ItemProperty -Path $R.path -Name $R.name -Value $R.value -Type $Type -Force
+        } else {
+            Write-BifrostLog "Registry correct: $($R.name)" -Color DarkGray -Indent
+        }
+    }
+}
+
+function Sync-BifrostServices {
+    param($Services, $IsAdmin)
+    if (-not $Services) { return }
+    Write-BifrostLog "`n[Module: Services]"
+    if (-not $IsAdmin) { Write-BifrostLog "Requires Administrator privileges." -Color Red; return }
+
+    foreach ($S in @($Services)) {
+        $Svc = Get-Service -Name $S.name -ErrorAction SilentlyContinue
+        if ($Svc) {
+            if ($S.startup) { Set-Service -Name $S.name -StartupType $S.startup }
+            if ($S.state -eq "Running" -and $Svc.Status -ne "Running") {
+                Write-BifrostLog "Starting Service: $($S.name)" -Color Green -Indent
+                Start-Service -Name $S.name
+            } elseif ($S.state -eq "Stopped" -and $Svc.Status -ne "Stopped") {
+                Write-BifrostLog "Stopping Service: $($S.name)" -Color Red -Indent
+                Stop-Service -Name $S.name
+            } else {
+                Write-BifrostLog "Service correct: $($S.name)" -Color DarkGray -Indent
+            }
+        } else {
+            Write-BifrostLog "Service NOT FOUND: $($S.name)" -Color Red -Indent
+        }
+    }
+}
+
+function Sync-BifrostScripts {
+    param($Scripts)
+    if (-not $Scripts) { return }
+    Write-BifrostLog "`n[Module: Scripts]"
+    foreach ($S in @($Scripts)) {
+        Write-BifrostLog "Executing: $($S.name)" -Color Gray -Indent
+        if ($S.command) { & ([scriptblock]::Create($S.command)) }
+        elseif ($S.path -and (Test-Path $S.path)) { & $S.path }
+    }
+}
+
+function Write-BifrostLog {
+    param([string]$Message, [string]$Color = "Cyan", [switch]$Indent)
+    $Prefix = if ($Indent) { "  -> " } else { "" }
+    Write-Host "$Prefix$Message" -ForegroundColor $Color
 }
