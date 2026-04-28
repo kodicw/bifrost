@@ -20,7 +20,7 @@ function Invoke-Bifrost {
         # ==========================================
         Write-BifrostLog "[Stage 0: Pre-Flight Check]" -Color Magenta
 
-        $IsAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+        $IsAdmin = Test-BifrostAdmin
         $Policy = Get-ExecutionPolicy
         
         if ($Policy -in @("Restricted", "AllSigned")) {
@@ -130,26 +130,29 @@ function Sync-BifrostPackages {
         $ConfigUser = @($Packages.apps) | Where-Object { ![string]::IsNullOrWhiteSpace($_) } | ForEach-Object { "$_".Trim().ToLower() }
         $ConfigGlobal = @($Packages.global_apps) | Where-Object { ![string]::IsNullOrWhiteSpace($_) } | ForEach-Object { "$_".Trim().ToLower() }
 
+        $InstalledApps = scoop list | ForEach-Object { 
+            if ($_ -match "^\s*(\S+)\s+\S+") { $matches[1].ToLower() } 
+        } | Where-Object { $_ -ne "installed" -and $_ -ne "apps:" }
+
         if ($Pure) {
             Write-BifrostLog "Pure Mode: Purging unmanaged Scoop packages..." -Color Yellow -Indent
-            $InstalledUser = scoop list | ForEach-Object { if ($_ -match "^(\S+)\s+") { $matches[1].ToLower() } }
-            foreach ($App in $InstalledUser) {
-                if ($App -ne 'scoop' -and $ConfigUser -notcontains $App) {
-                    Write-BifrostLog "Uninstalling orphaned user app: $App" -Color Red -Indent
+            foreach ($App in $InstalledApps) {
+                if ($App -ne 'scoop' -and $ConfigUser -notcontains $App -and $ConfigGlobal -notcontains $App) {
+                    Write-BifrostLog "Uninstalling orphaned app: $App" -Color Red -Indent
                     scoop uninstall $App | Out-Null
                 }
             }
         }
 
         foreach ($B in $ConfigBuckets) {
-            if (-not (scoop bucket list | Select-String "^$B\s")) { 
+            if (-not (scoop bucket list | Select-String "^$([regex]::Escape($B))\s")) { 
                 Write-BifrostLog "Adding Bucket: $B" -Color Green -Indent
                 scoop bucket add $B | Out-Null
             }
         }
 
         foreach ($A in $ConfigUser) {
-            if (-not (scoop list | Select-String "^$A\s")) { 
+            if ($InstalledApps -notcontains $A) { 
                 Write-BifrostLog "Installing App: $A" -Color Green -Indent
                 scoop install $A | Out-Null
             }
@@ -157,7 +160,7 @@ function Sync-BifrostPackages {
 
         if ($IsAdmin -and $ConfigGlobal.Count -gt 0) {
             foreach ($GA in $ConfigGlobal) {
-                if (-not (scoop list | Select-String "^$GA\s.*\[global\]")) { 
+                if (-not (scoop list | Select-String "^$([regex]::Escape($GA))\s.*\[global\]")) { 
                     Write-BifrostLog "Installing Global App: $GA" -Color Green -Indent
                     scoop install $GA -g | Out-Null
                 }
@@ -172,7 +175,7 @@ function Sync-BifrostSystem {
     Write-BifrostLog "`n[Module: System]"
     if (-not $IsAdmin) { Write-BifrostLog "Requires Administrator privileges." -Color Red; return }
 
-    foreach ($F in @($System.features)) {
+    foreach ($F in (@($System.features) | Where-Object { $_ })) {
         $Feature = Get-WindowsOptionalFeature -Online -FeatureName $F -ErrorAction SilentlyContinue
         if ($null -ne $Feature -and $Feature.State -ne 'Enabled') {
             Write-BifrostLog "Enabling Feature: $F" -Color Green -Indent
@@ -180,7 +183,7 @@ function Sync-BifrostSystem {
         }
     }
 
-    foreach ($C in @($System.capabilities)) {
+    foreach ($C in (@($System.capabilities) | Where-Object { $_ })) {
         $Cap = Get-WindowsCapability -Online -Name "$C*" -ErrorAction SilentlyContinue | Where-Object State -eq 'NotPresent'
         if ($Cap) {
             Write-BifrostLog "Adding Capability: $($Cap.Name)" -Color Green -Indent
@@ -213,8 +216,8 @@ function Sync-BifrostNetworking {
         
         $Remote = if ($FW.tailscaleOnly) { "100.64.0.0/10" } else { "Any" }
 
-        foreach ($P in @($FW.allowedTCPPorts)) { $Rules += @{ Name="TCP-$P"; Proto="TCP"; Port=$P } }
-        foreach ($P in @($FW.allowedUDPPorts)) { $Rules += @{ Name="UDP-$P"; Proto="UDP"; Port=$P } }
+        foreach ($P in (@($FW.allowedTCPPorts) | Where-Object { $_ })) { $Rules += @{ Name="TCP-$P"; Proto="TCP"; Port=$P } }
+        foreach ($P in (@($FW.allowedUDPPorts) | Where-Object { $_ })) { $Rules += @{ Name="UDP-$P"; Proto="UDP"; Port=$P } }
 
         foreach ($R in $Rules) {
             $ID = "Bifrost-$($R.Name)"
@@ -258,13 +261,27 @@ function Sync-BifrostFiles {
         if (-not (Test-Path $ParentDir)) { New-Item -ItemType Directory -Force -Path $ParentDir | Out-Null }
         
         $Encoding = if ($F.encoding) { $F.encoding } else { "utf8" }
-        $CurrentContent = if (Test-Path $TargetPath) { Get-Content -Raw $TargetPath } else { $null }
+        $NeedsUpdate = $false
 
-        if ($CurrentContent -ne $F.content) {
+        if (-not (Test-Path $TargetPath)) {
+            $NeedsUpdate = $true
+        } else {
+            # Use SHA256 hashing to determine if content differs
+            $CurrentHash = Get-FileHash -Path $TargetPath -Algorithm SHA256
+            $DesiredContentBytes = [System.Text.Encoding]::UTF8.GetBytes($F.content)
+            $Stream = [System.IO.MemoryStream]::new($DesiredContentBytes)
+            $DesiredHash = Get-FileHash -InputStream $Stream -Algorithm SHA256
+            
+            if ($CurrentHash.Hash -ne $DesiredHash.Hash) {
+                $NeedsUpdate = $true
+            }
+        }
+
+        if ($NeedsUpdate) {
             Write-BifrostLog "Enforcing File: $TargetPath" -Color Green -Indent
             Set-Content -Path $TargetPath -Value $F.content -Encoding $Encoding -Force
         } else {
-            Write-BifrostLog "File is correct: $TargetPath" -Color DarkGray -Indent
+            Write-BifrostLog "File is correct (Hash matched): $TargetPath" -Color DarkGray -Indent
         }
     }
 }
@@ -276,11 +293,23 @@ function Sync-BifrostRegistry {
     foreach ($R in @($Registry)) {
         if (-not (Test-Path $R.path)) { New-Item -Path $R.path -Force | Out-Null }
         
-        $CurrentValue = Get-ItemProperty -Path $R.path -Name $R.name -ErrorAction SilentlyContinue
         $Type = if ($R.type) { $R.type } else { "String" }
+        $Key = Get-Item -Path $R.path -ErrorAction SilentlyContinue
+        $ExistingKind = if ($Key -and ($Key.GetValueNames() -contains $R.name)) { $Key.GetValueKind($R.name).ToString() } else { $null }
+        $CurrentValue = Get-ItemProperty -Path $R.path -Name $R.name -ErrorAction SilentlyContinue
 
-        if ($null -eq $CurrentValue -or $CurrentValue.$($R.name) -ne $R.value) {
-            Write-BifrostLog "Enforcing Registry: $($R.path)\$($R.name)" -Color Green -Indent
+        $NeedsUpdate = $false
+        if ($null -eq $CurrentValue -or $null -eq $ExistingKind) {
+            $NeedsUpdate = $true
+        } elseif ($CurrentValue.$($R.name) -ne $R.value) {
+            $NeedsUpdate = $true
+        } elseif ($ExistingKind -ne $Type) {
+            # Special case for DWord/Int32 if needed, but usually they match
+            $NeedsUpdate = $true
+        }
+
+        if ($NeedsUpdate) {
+            Write-BifrostLog "Enforcing Registry: $($R.path)\$($R.name) (Type: $Type)" -Color Green -Indent
             Set-ItemProperty -Path $R.path -Name $R.name -Value $R.value -Type $Type -Force
         } else {
             Write-BifrostLog "Registry correct: $($R.name)" -Color DarkGray -Indent
@@ -297,14 +326,24 @@ function Sync-BifrostServices {
     foreach ($S in @($Services)) {
         $Svc = Get-Service -Name $S.name -ErrorAction SilentlyContinue
         if ($Svc) {
-            if ($S.startup) { Set-Service -Name $S.name -StartupType $S.startup }
+            $Changed = $false
+            if ($S.startup -and $Svc.StartType -ne $S.startup) { 
+                Write-BifrostLog "Updating StartupType: $($S.name) -> $($S.startup)" -Color Gray -Indent
+                Set-Service -Name $S.name -StartupType $S.startup
+                $Changed = $true
+            }
+            
             if ($S.state -eq "Running" -and $Svc.Status -ne "Running") {
                 Write-BifrostLog "Starting Service: $($S.name)" -Color Green -Indent
                 Start-Service -Name $S.name
+                $Changed = $true
             } elseif ($S.state -eq "Stopped" -and $Svc.Status -ne "Stopped") {
                 Write-BifrostLog "Stopping Service: $($S.name)" -Color Red -Indent
                 Stop-Service -Name $S.name
-            } else {
+                $Changed = $true
+            } 
+            
+            if (-not $Changed) {
                 Write-BifrostLog "Service correct: $($S.name)" -Color DarkGray -Indent
             }
         } else {
@@ -328,4 +367,12 @@ function Write-BifrostLog {
     param([string]$Message, [string]$Color = "Cyan", [switch]$Indent)
     $Prefix = if ($Indent) { "  -> " } else { "" }
     Write-Host "$Prefix$Message" -ForegroundColor $Color
+}
+
+function Test-BifrostAdmin {
+    try {
+        return ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+    } catch {
+        return $false
+    }
 }
