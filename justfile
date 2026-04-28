@@ -12,7 +12,7 @@ audit:
     @echo "🔍 Auditing for Technical Purity..."
     @statix check .
     @deadnix .
-    @# Add pester tests here once implemented
+    @pwsh -Command "Invoke-Pester -Path tests"
     @echo "✅ Audit Complete."
 
 # Prune dead code and technical debt
