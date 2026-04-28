@@ -15,6 +15,7 @@
 ## 🚀 Active Tasks
 - [x] **Audit bifrost.ps1 for idempotency and modularity** [architect/lead]
 - [x] **Implement initial Pester test suite for basic state enforcement** [tester/lead]
+- [ ] **Implement bifrost-gen: a tool to generate config.json from Nix expressions** [lead/architect]
 - [ ] **Create jbot_memory_interface.py with an abstract MemoryInterface** [architect]
 - [x] **Draft ADR for Nix-to-Windows mapping schema** [lead]
 - [x] **Implement Nix library (lib.nix) for declarative mapping** [lead]
