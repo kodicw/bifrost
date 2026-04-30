@@ -1,5 +1,6 @@
-# Context: [[nb:jbot:126]]
+# Context: [[nb:jbot:126]], [[nb:jbot:210]]
 # ADR: PowerShell Idempotency and Modularity
+# ADR: Deep Idempotency for Downloads
 
 function Invoke-Bifrost {
     [CmdletBinding()]
@@ -236,7 +237,20 @@ function Sync-BifrostDownloads {
     Write-BifrostLog "`n[Module: Downloads]"
     foreach ($D in @($Downloads)) {
         $TargetPath = $D.path
+        $NeedsDownload = $false
+        
         if (-not (Test-Path $TargetPath)) {
+            $NeedsDownload = $true
+        } elseif ($D.hash) {
+            $Algorithm = if ($D.hashAlgorithm) { $D.hashAlgorithm } else { "SHA256" }
+            $CurrentHash = (Get-FileHash -Path $TargetPath -Algorithm $Algorithm).Hash
+            if ($CurrentHash -ne $D.hash) {
+                Write-BifrostLog "Hash mismatch for $TargetPath. Re-downloading..." -Color Yellow -Indent
+                $NeedsDownload = $true
+            }
+        }
+
+        if ($NeedsDownload) {
             Write-BifrostLog "Downloading: $($D.url) -> $TargetPath" -Color Green -Indent
             try {
                 $Parent = Split-Path $TargetPath -Parent
@@ -246,7 +260,7 @@ function Sync-BifrostDownloads {
                 Write-BifrostLog "Download failed: $($D.url)" -Color Red -Indent
             }
         } else {
-            Write-BifrostLog "File exists: $TargetPath" -Color DarkGray -Indent
+            Write-BifrostLog "File exists and hash matches: $TargetPath" -Color DarkGray -Indent
         }
     }
 }
@@ -357,9 +371,28 @@ function Sync-BifrostScripts {
     if (-not $Scripts) { return }
     Write-BifrostLog "`n[Module: Scripts]"
     foreach ($S in @($Scripts)) {
-        Write-BifrostLog "Executing: $($S.name)" -Color Gray -Indent
-        if ($S.command) { & ([scriptblock]::Create($S.command)) }
-        elseif ($S.path -and (Test-Path $S.path)) { & $S.path }
+        $Skip = $false
+        
+        if ($S.creates -and (Test-Path $S.creates)) {
+            Write-BifrostLog "Skipping (Path exists): $($S.name)" -Color DarkGray -Indent
+            $Skip = $true
+        } elseif ($S.unless) {
+            try {
+                $Check = & ([scriptblock]::Create($S.unless))
+                if ($Check) {
+                    Write-BifrostLog "Skipping (Condition met): $($S.name)" -Color DarkGray -Indent
+                    $Skip = $true
+                }
+            } catch {
+                Write-BifrostLog "Error evaluating 'unless' for $($S.name): $($_.Exception.Message)" -Color Red -Indent
+            }
+        }
+
+        if (-not $Skip) {
+            Write-BifrostLog "Executing: $($S.name)" -Color Gray -Indent
+            if ($S.command) { & ([scriptblock]::Create($S.command)) }
+            elseif ($S.path -and (Test-Path $S.path)) { & $S.path }
+        }
     }
 }
 

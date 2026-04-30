@@ -26,12 +26,13 @@
           ];
 
           shellHook = ''
-            echo "🌈 Bifrost Development Environment"
+            echo "👻 Bifrost Development Environment"
             echo "JBot Organization is active in .jbot/"
           '';
         };
       }
     ) // {
+      inherit lib;
       # Expose a Home Manager module to schedule Bifrost agents
       homeManagerModules.default = _: {
         programs.jbot.agents = {

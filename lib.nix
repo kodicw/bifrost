@@ -27,13 +27,13 @@ let
   };
 
   # Helper to create a download entry
-  mkDownload = { url, path }: {
-    inherit url path;
+  mkDownload = { url, path, hash ? null, hashAlgorithm ? "SHA256" }: {
+    inherit url path hash hashAlgorithm;
   };
 
   # Helper to create a script entry
-  mkScript = { name, command ? null, path ? null }: {
-    inherit name command path;
+  mkScript = { name, command ? null, path ? null, unless ? null, creates ? null }: {
+    inherit name command path unless creates;
   };
 
 in

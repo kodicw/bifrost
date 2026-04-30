@@ -7,11 +7,11 @@ BeforeAll {
         "Get-NetFirewallRule", "New-NetFirewallRule", "Remove-NetFirewallRule", "Set-NetFirewallProfile",
         "Get-WindowsOptionalFeature", "Enable-WindowsOptionalFeature",
         "Get-WindowsCapability", "Add-WindowsCapability",
-        "Get-ItemProperty", "Set-ItemProperty", "scoop", "Get-Item", "Get-FileHash"
+        "Get-ItemProperty", "Set-ItemProperty", "scoop", "Get-Item", "Get-FileHash", "Invoke-WebRequest"
     )
 
     # These exist on Linux but with different parameter sets or providers
-    $ForceOverride = @("Set-ItemProperty", "Get-ItemProperty", "Get-Item", "Get-FileHash")
+    $ForceOverride = @("Set-ItemProperty", "Get-ItemProperty", "Get-Item", "Get-FileHash", "Invoke-WebRequest")
 
     foreach ($Cmd in $WindowsCommands) {
         if ($Cmd -in $ForceOverride -or -not (Get-Command $Cmd -ErrorAction SilentlyContinue)) {
@@ -65,6 +65,54 @@ Describe "Bifrost Sync Modules" {
             # scoop bucket list (1) + scoop bucket add (1) + scoop list (1) + scoop install (1) = 4 calls
             Assert-MockCalled scoop -Times 4 -Exactly
         }
+
+        It "Should purge unmanaged apps in Pure mode" {
+            Mock Get-Command { return $true }
+            Mock scoop { 
+                param([Parameter(ValueFromRemainingArguments)]$rest)
+                if ($rest[0] -eq "list") { return "Installed apps:", "git 2.30.0", "unmanaged-app 1.0.0" }
+                return $null
+            }
+            Mock Write-BifrostLog { }
+
+            $Packages = @{ apps = @("git") }
+            Sync-BifrostPackages -Packages $Packages -IsAdmin $false -Pure $true -Policy "RemoteSigned" | Out-Null
+
+            # Should call 'scoop uninstall unmanaged-app'
+            Assert-MockCalled scoop -ParameterFilter { $rest[0] -eq "uninstall" -and $rest[1] -eq "unmanaged-app" } -Exactly 1
+        }
+
+        It "Should ignore scoop headers in messy list output" {
+            Mock Get-Command { return $true }
+            Mock scoop { 
+                param([Parameter(ValueFromRemainingArguments)]$rest)
+                if ($rest[0] -eq "list") { return "Installed apps (C:\scoop):", "---", "git 2.30.0" }
+                return $null
+            }
+            Mock Write-BifrostLog { }
+
+            $Packages = @{ apps = @("git") }
+            # If git is correctly identified as installed, scoop install git should NOT be called
+            Sync-BifrostPackages -Packages $Packages -IsAdmin $false -Pure $false -Policy "RemoteSigned" | Out-Null
+            
+            Assert-MockCalled scoop -ParameterFilter { $rest[0] -eq "install" -and $rest[1] -eq "git" } -Exactly 0
+        }
+
+        It "Should handle regex special characters in bucket names" {
+            Mock Get-Command { return $true }
+            Mock scoop { 
+                param([Parameter(ValueFromRemainingArguments)]$rest)
+                if ($rest[0] -eq "bucket" -and $rest[1] -eq "list") { return "extras" }
+                return $null
+            }
+            Mock Write-BifrostLog { }
+
+            $Packages = @{ buckets = @("my.bucket+") }
+            Sync-BifrostPackages -Packages $Packages -IsAdmin $false -Pure $false -Policy "RemoteSigned" | Out-Null
+
+            # Should call 'scoop bucket add my.bucket+'
+            Assert-MockCalled scoop -ParameterFilter { $rest[0] -eq "bucket" -and $rest[1] -eq "add" -and $rest[2] -eq "my.bucket+" } -Exactly 1
+        }
     }
 
     Context "Sync-BifrostSystem" {
@@ -76,6 +124,59 @@ Describe "Bifrost Sync Modules" {
             Sync-BifrostSystem -System @{ features = @("NetFx3") } -IsAdmin $true | Out-Null
 
             Assert-MockCalled Enable-WindowsOptionalFeature -Exactly 1
+        }
+
+        It "Should handle null feature arrays gracefully" {
+            Mock Write-BifrostLog { }
+            Sync-BifrostSystem -System @{ features = $null } -IsAdmin $true | Out-Null
+            # Should not throw
+        }
+    }
+
+    Context "Sync-BifrostDownloads" {
+        It "Should download if file missing" {
+            Mock Test-Path { return $false }
+            Mock New-Item { }
+            Mock Invoke-WebRequest { }
+            Mock Write-BifrostLog { }
+
+            Sync-BifrostDownloads -Downloads @(@{ url="http://test"; path="C:\test.bin" }) | Out-Null
+            
+            Assert-MockCalled Invoke-WebRequest -Exactly 1
+        }
+
+        It "Should skip if file exists and no hash provided" {
+            Mock Test-Path { return $true }
+            Mock Invoke-WebRequest { }
+            Mock Write-BifrostLog { }
+
+            Sync-BifrostDownloads -Downloads @(@{ url="http://test"; path="C:\test.bin" }) | Out-Null
+            
+            Assert-MockCalled Invoke-WebRequest -Exactly 0
+        }
+
+        It "Should re-download if hash mismatches" {
+            Mock Test-Path { return $true }
+            Mock Get-FileHash { return [PSCustomObject]@{ Hash = "WRONG_HASH" } }
+            Mock Invoke-WebRequest { }
+            Mock Write-BifrostLog { }
+
+            $D = @(@{ url="http://test"; path="C:\test.bin"; hash="RIGHT_HASH" })
+            Sync-BifrostDownloads -Downloads $D | Out-Null
+            
+            Assert-MockCalled Invoke-WebRequest -Exactly 1
+        }
+
+        It "Should skip if hash matches" {
+            Mock Test-Path { return $true }
+            Mock Get-FileHash { return [PSCustomObject]@{ Hash = "RIGHT_HASH" } }
+            Mock Invoke-WebRequest { }
+            Mock Write-BifrostLog { }
+
+            $D = @(@{ url="http://test"; path="C:\test.bin"; hash="RIGHT_HASH" })
+            Sync-BifrostDownloads -Downloads $D | Out-Null
+            
+            Assert-MockCalled Invoke-WebRequest -Exactly 0
         }
     }
 
@@ -145,6 +246,44 @@ Describe "Bifrost Sync Modules" {
 
             Assert-MockCalled New-NetFirewallRule -Times 1 -Exactly
         }
+
+        It "Should purge rules in Pure mode" {
+            Mock Set-NetFirewallProfile { }
+            Mock Remove-NetFirewallRule { }
+            Mock Get-NetFirewallRule { return $null }
+            Mock New-NetFirewallRule { }
+            Mock Write-BifrostLog { }
+
+            $Net = @{ firewall = @{ enabled = $true; allowedTCPPorts = @(80) } }
+            Sync-BifrostNetworking -Networking $Net -IsAdmin $true -Pure $true | Out-Null
+
+            Assert-MockCalled Remove-NetFirewallRule -Exactly 1
+        }
+
+        It "Should NOT purge rules when Pure is false" {
+            Mock Set-NetFirewallProfile { }
+            Mock Remove-NetFirewallRule { }
+            Mock Get-NetFirewallRule { return $null }
+            Mock New-NetFirewallRule { }
+            Mock Write-BifrostLog { }
+
+            $Net = @{ firewall = @{ enabled = $true; allowedTCPPorts = @(80) } }
+            Sync-BifrostNetworking -Networking $Net -IsAdmin $true -Pure $false | Out-Null
+
+            Assert-MockCalled Remove-NetFirewallRule -Exactly 0
+        }
+
+        It "Should handle null port arrays" {
+            Mock Set-NetFirewallProfile { }
+            Mock Get-NetFirewallRule { return $null }
+            Mock New-NetFirewallRule { }
+            Mock Write-BifrostLog { }
+
+            $Net = @{ firewall = @{ enabled = $true; allowedTCPPorts = $null } }
+            Sync-BifrostNetworking -Networking $Net -IsAdmin $true -Pure $false | Out-Null
+            # Should not throw
+            Assert-MockCalled New-NetFirewallRule -Exactly 0
+        }
     }
 
     Context "Sync-BifrostServices" {
@@ -158,6 +297,30 @@ Describe "Bifrost Sync Modules" {
             Sync-BifrostServices -Services @(@{ name="TestSvc"; state="Running" }) -IsAdmin $true | Out-Null
             
             Assert-MockCalled Start-Service -Exactly 1
+        }
+    }
+
+    Context "Sync-BifrostScripts" {
+        It "Should execute script if no condition provided" {
+            Mock Write-BifrostLog { }
+            $Scripts = @(@{ name = "Test"; command = "Write-Output 'Hello'" })
+            Sync-BifrostScripts -Scripts $Scripts | Out-Null
+            Assert-MockCalled Write-BifrostLog -Times 2
+        }
+
+        It "Should skip script if 'creates' path exists" {
+            Mock Test-Path { return $true }
+            Mock Write-BifrostLog { }
+            $Scripts = @(@{ name = "Test"; command = "Write-Output 'Hello'"; creates = "C:\exists.txt" })
+            Sync-BifrostScripts -Scripts $Scripts | Out-Null
+            Assert-MockCalled Write-BifrostLog -ParameterFilter { $Message -match "Skipping \(Path exists\)" } -Exactly 1
+        }
+
+        It "Should skip script if 'unless' returns true" {
+            Mock Write-BifrostLog { }
+            $Scripts = @(@{ name = "Test"; command = "Write-Output 'Hello'"; unless = '$true' })
+            Sync-BifrostScripts -Scripts $Scripts | Out-Null
+            Assert-MockCalled Write-BifrostLog -ParameterFilter { $Message -match "Skipping \(Condition met\)" } -Exactly 1
         }
     }
 

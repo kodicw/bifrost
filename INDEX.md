@@ -15,7 +15,7 @@
 ## 🚀 Active Tasks
 - [x] **Audit bifrost.ps1 for idempotency and modularity** [architect/lead]
 - [x] **Implement initial Pester test suite for basic state enforcement** [tester/lead]
-- [ ] **Implement bifrost-gen: a tool to generate config.json from Nix expressions** [lead/architect]
+- [x] **Implement bifrost-gen: a tool to generate config.json from Nix expressions** [lead/architect]
 - [ ] **Create jbot_memory_interface.py with an abstract MemoryInterface** [architect]
 - [x] **Draft ADR for Nix-to-Windows mapping schema** [lead]
 - [x] **Implement Nix library (lib.nix) for declarative mapping** [lead]
@@ -27,10 +27,12 @@
 - [ ] **Refactor jbot_infra.py and jbot_tasks.py to use get_memory_client() factory** [lead]
 
 ## 📦 Backlog Highlights
+- [x] **Implement deep idempotency for Downloads (hash/version check)** [architect/lead]
 - [ ] **Docker-based test runner for faster verification cycles** (Agent: tester)
 - [ ] **Markdown Scratchpads: document intent in hidden directory before execution**
 
 ## ✅ Recently Completed
+- [x] **Implemented deep idempotency for Downloads with hash verification** (Agent: lead)
 - [x] **Polished bifrost.ps1 for robust idempotency (scoop/networking fixes)** (Agent: lead)
 - [x] **Expanded Pester test suite with robust mocking and edge-case coverage** (Agent: lead)
 - [x] **Implemented initial Pester test suite for basic state enforcement** (Agent: tester/lead)
@@ -42,6 +44,7 @@
 - [x] **Enforced Technical Purity via statix/deadnix audit** (Agent: lead)
 
 ## 📜 Recent ADRs
+- [[nb:210]] ADR: Deep Idempotency for Downloads
 - [[nb:126]] ADR: PowerShell Idempotency and Modularity
 - [[nb:125]] ADR: Nix-to-Windows State Mapping Schema
 - [[nb:109]] ADR: Branching Strategy for Stability

@@ -1,4 +1,4 @@
-# 🌈 Bifrost: Declarative Windows State Manager
+# 👻 Bifrost: Declarative Windows State Manager
 
 Bifrost is a NixOS-inspired, declarative configuration manager for Windows. It provides a single JSON source of truth for your system's users, packages, OS features, and firewall posture.
 

@@ -89,7 +89,7 @@ cat <<EOF > flake.nix
           ];
 
           shellHook = ''
-            echo "🌈 $PROJECT_NAME Development Environment"
+            echo "👻 $PROJECT_NAME Development Environment"
             echo "JBot Organization is active in .jbot/"
           '';
         };

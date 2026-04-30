@@ -1,4 +1,4 @@
-# 🌈 Bifrost: Product Requirements Document (PRD)
+# 👻 Bifrost: Product Requirements Document (PRD)
 
 ## 1. Overview
 **Bifrost** is a NixOS-inspired, declarative configuration manager for Windows. It aims to bridge the gap between the immutable, declarative world of Nix/NixOS and the imperative, stateful nature of Windows. By using a single JSON file as the source of truth, Bifrost allows users to define the desired state of a Windows machine and reconcile it with a single command.
