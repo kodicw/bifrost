@@ -35,7 +35,7 @@
       inherit lib;
       # Expose a Home Manager module to schedule Bifrost agents
       homeManagerModules.default = _: {
-        programs.jbot.agents = {
+        programs.nixspirit.agents = {
           bifrost-lead = {
             enable = true;
             role = "Managerial Lead";
