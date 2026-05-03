@@ -4,10 +4,10 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
-    jbot.url = "github:kodicw/jbot";
+    nixspirit.url = "github:kodicw/nixspirit";
   };
 
-  outputs = { nixpkgs, flake-utils, ... }:
+  outputs = { nixpkgs, flake-utils, nixspirit, ... }:
     let
       # Use nixpkgs lib for the library
       lib = import ./lib.nix { inherit (nixpkgs) lib; };
